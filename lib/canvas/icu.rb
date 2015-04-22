@@ -20,6 +20,7 @@ module Canvas::ICU
   begin
     Bundler.require 'icu'
     if !ICU::Lib.respond_to?(:ucol_getRules)
+      require 'ffi'
       suffix = ICU::Lib.figure_suffix(ICU::Lib.version.to_s)
 
       ICU::Lib.attach_function(:ucol_getRules, "ucol_getRules#{suffix}", [:pointer, :pointer], :pointer)
@@ -108,7 +109,6 @@ module Canvas::ICU
         collator = ICU::Collation::Collator.new(I18n.locale.to_s)
         collator.normalization_mode = true
         collator.numeric_collation = true
-        collator.alternate_handling = :shifted
         collator
       end
     end

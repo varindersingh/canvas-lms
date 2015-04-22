@@ -25,13 +25,17 @@ class StreamItem < ActiveRecord::Base
   has_many :stream_item_instances
   has_many :users, :through => :stream_item_instances
   belongs_to :context, :polymorphic => true
+  validates_inclusion_of :context_type, :allow_nil => true, :in => ['Course', 'Account', 'Group', 'AssignmentOverride', 'Assignment']
   belongs_to :asset, :polymorphic => true, :types => [
       :collaboration, :conversation, :discussion_entry,
-      :discussion_topic, :message, :submission, :web_conference]
+      :discussion_topic, :message, :submission, :web_conference, :assessment_request]
+  validates_inclusion_of :asset_type, :allow_nil => true, :in => ['Collaboration', 'Conversation', 'DiscussionEntry',
+      'DiscussionTopic', 'Message', 'Submission', 'WebConference', 'AssessmentRequest']
   validates_presence_of :asset_type, :data
 
   attr_accessible :context, :asset
   after_destroy :destroy_stream_item_instances
+  attr_accessor :unread, :participant, :invalidate_immediately
 
   def self.reconstitute_ar_object(type, data)
     return nil unless data
@@ -44,7 +48,7 @@ class StreamItem < ActiveRecord::Base
     when 'DiscussionTopic', 'Announcement'
       root_discussion_entries = data.delete(:root_discussion_entries)
       root_discussion_entries = root_discussion_entries.map { |entry| reconstitute_ar_object('DiscussionEntry', entry) }
-      res.root_discussion_entries.target = root_discussion_entries
+      res.association(:root_discussion_entries).target = root_discussion_entries
       res.attachment = reconstitute_ar_object('Attachment', data.delete(:attachment))
     when 'Submission'
       data['body'] = nil
@@ -52,7 +56,7 @@ class StreamItem < ActiveRecord::Base
     if data.has_key?('users')
       users = data.delete('users')
       users = users.map { |user| reconstitute_ar_object('User', user) }
-      res.users.target = users
+      res.association(:users).target = users
     end
     if data.has_key?('participants')
       users = data.delete('participants')
@@ -141,7 +145,6 @@ class StreamItem < ActiveRecord::Base
       end
       if object.attachment
         hash = object.attachment.attributes.slice('id', 'display_name')
-        hash['scribdable?'] = object.attachment.scribdable?
         res[:attachment] = hash
       end
     when Conversation
@@ -165,7 +168,7 @@ class StreamItem < ActiveRecord::Base
     when WebConference
       res = object.attributes
       res['users'] = object.users.map{|u| prepare_user(u)}
-    when CollectionItem
+    when AssessmentRequest
       res = object.attributes
     else
       raise "Unexpected stream item type: #{object.class.to_s}"
@@ -232,6 +235,8 @@ class StreamItem < ActiveRecord::Base
       l_context_id = res.context_id
       stream_item_id = res.id
 
+      # do the bulk insert in user id order to avoid locking problems on postges < 9.3 (foreign keys)
+      user_ids_subset.sort!
       #find out what the current largest stream item instance is so that we can delete them all once the new ones are created
       greatest_existing_id = StreamItemInstance.where(:stream_item_id => stream_item_id, :user_id => user_ids_subset).maximum(:id) || 0
 
@@ -259,24 +264,15 @@ class StreamItem < ActiveRecord::Base
       # Old stream items are deleted in a periodic job.
       StreamItemInstance.where("user_id in (?) AND stream_item_id = ? AND id <= ?",
             user_ids_subset, stream_item_id, greatest_existing_id).delete_all
-    end
 
-
-    # Here is where we used to go through and update the stream item for anybody
-    # not in user_ids who had the item in their stream, so that the item would
-    # be up-to-date, but not jump to the top of their stream. Now that
-    # we're updating StreamItems in-place and just linking to them through
-    # StreamItemInstances, this happens automatically.
-    # If a teacher leaves a comment for a student, for example
-    # we don't want that to jump to the top of the *teacher's* stream, but
-    # if it's still visible on the teacher's stream then it had better show
-    # the teacher's comment even if it is farther down.
-
-    # touch all the users to invalidate the cache
-    if Rails.version < '3.0'
-      User.update_all({:updated_at => Time.now.utc}, {:id => user_ids})
-    else
-      User.where(:id => user_ids).update_all(:updated_at => Time.now.utc)
+      # touch all the users to invalidate the cache
+      User.transaction do
+        lock_type = true
+        lock_type = 'FOR NO KEY UPDATE' if User.connection.adapter_name == 'PostgreSQL' && User.connection.send(:postgresql_version) >= 90300
+        # lock the rows in a predefined order to prevent deadlocks
+        ids_to_touch = User.where(id: user_ids_subset).not_recently_touched.lock(lock_type).order(:id).pluck(:id)
+        User.where(id: ids_to_touch).update_all(updated_at: Time.now.utc)
+      end
     end
 
     return [res]
@@ -297,14 +293,16 @@ class StreamItem < ActiveRecord::Base
 
   def self.prepare_object_for_unread(object)
     case object
-    when DiscussionTopic
-      DiscussionTopic.send(:preload_associations, object, :discussion_topic_participants)
+      when DiscussionTopic
+        ActiveRecord::Associations::Preloader.new(object, :discussion_topic_participants).run
     end
   end
 
   def self.object_unread_for_user(object, user_id)
     case object
     when DiscussionTopic
+      object.read_state(user_id)
+    when Submission
       object.read_state(user_id)
     else
       nil
@@ -313,7 +311,7 @@ class StreamItem < ActiveRecord::Base
 
   def self.update_read_state_for_asset(asset, new_state, user_id)
     if item = asset.stream_item
-      StreamItemInstance.find_by_user_id_and_stream_item_id(user_id, item.id).try(:update_attribute, :workflow_state, new_state)
+      StreamItemInstance.where(user_id: user_id, stream_item_id: item).first.try(:update_attribute, :workflow_state, new_state)
     end
   end
 
@@ -338,13 +336,15 @@ class StreamItem < ActiveRecord::Base
     scope = scope.includes(:stream_item_instances) if touch_users
 
     while true
-      batch = scope.all
+      batch = scope.reload.all
       batch.each do |item|
         count += 1
         if touch_users
           user_ids.add(item.stream_item_instances.map(&:user_id))
         end
+
         # this will destroy the associated stream_item_instances as well
+        item.invalidate_immediately = true
         item.destroy
       end
       break if batch.empty?
@@ -352,11 +352,7 @@ class StreamItem < ActiveRecord::Base
 
     unless user_ids.empty?
       # touch all the users to invalidate the cache
-      if Rails.version < '3.0'
-        User.update_all({:updated_at => Time.now.utc}, {:id => user_ids.to_a})
-      else
-        User.where(:id => user_ids.to_a).update_all(:updated_at => Time.now.utc)
-      end
+      User.where(:id => user_ids.to_a).update_all(:updated_at => Time.now.utc)
     end
 
     count
@@ -391,12 +387,12 @@ class StreamItem < ActiveRecord::Base
     case res
     when DiscussionTopic, Announcement
       if res.require_initial_post
-        res.write_attribute(:user_has_posted, true)
+        res.user_has_posted = true
         if res.user_ids_that_can_see_responses && !res.user_ids_that_can_see_responses.member?(viewing_user_id)
           original_res = res
           res = original_res.clone
           res.id = original_res.id
-          res.root_discussion_entries = []
+          res.association(:root_discussion_entries).target = []
           res.user_has_posted = false
           res.readonly!
         end
@@ -408,7 +404,16 @@ class StreamItem < ActiveRecord::Base
 
   public
   def destroy_stream_item_instances
-    # bare scoped call avoid Rails 2 HasManyAssociation loading all objects
-    self.stream_item_instances.with_each_shard { |scope| scope.scoped.delete_all; nil }
+    self.stream_item_instances.with_each_shard do |scope|
+      user_ids = scope.pluck(:user_id)
+      if !self.invalidate_immediately && user_ids.count > 100
+        StreamItemCache.send_later_if_production_enqueue_args(:invalidate_all_recent_stream_items,
+          { :priority => Delayed::LOW_PRIORITY }, user_ids, self.context_type, self.context_id)
+      else
+        StreamItemCache.invalidate_all_recent_stream_items(user_ids, self.context_type, self.context_id)
+      end
+      scope.delete_all
+      nil
+    end
   end
 end

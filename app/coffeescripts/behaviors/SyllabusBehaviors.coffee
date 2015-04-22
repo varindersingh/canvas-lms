@@ -20,6 +20,7 @@ define [
   'jquery' # jQuery, $ #
   'calendar_move' # calendarMonths #
   'wikiSidebar'
+  'compiled/views/editor/KeyboardShortcuts'
   'jquery.instructure_date_and_time' # dateString, datepicker #
   'jquery.instructure_forms' # formSubmit, formErrors #
   'jquery.instructure_misc_helpers' # scrollSidebar #
@@ -29,7 +30,7 @@ define [
   'tinymce.editor_box' # editorBox #
   'vendor/jquery.scrollTo' # /\.scrollTo/ #
   'jqueryui/datepicker' # /\.datepicker/ #
-], ($, calendarMonths, wikiSidebar) ->
+], ($, calendarMonths, wikiSidebar, KeyboardShortcuts) ->
 
   specialDatesAreHidden = false
 
@@ -119,7 +120,7 @@ define [
       $('tr.selected').removeClass('selected')
       $row.addClass('selected')
       $('html, body').scrollTo $row
-      $row.find('a').focus() if e.screenX == 0
+      $row.find('a').first().focus()
 
   selectDate = (date) ->
     $('.mini_month .day.selected').removeClass('selected')
@@ -170,6 +171,10 @@ define [
 
   # Binds to edit syllabus dom events
   bindToEditSyllabus = ->
+
+    # Add the backbone view for keyboardshortup help here
+    $('.toggle_views_link').first().before((new KeyboardShortcuts()).render().$el)
+
     $edit_course_syllabus_form = $('#edit_course_syllabus_form')
     $course_syllabus_body = $('#course_syllabus_body')
     $course_syllabus = $('#course_syllabus')
@@ -205,6 +210,9 @@ define [
     $edit_course_syllabus_form.on 'click', '.toggle_views_link', (ev) ->
       ev.preventDefault()
       $course_syllabus_body.editorBox 'toggle'
+      # hide the clicked link, and show the other toggle link.
+      # todo: replace .andSelf with .addBack when JQuery is upgraded.
+      $(ev.currentTarget).siblings('.toggle_views_link').andSelf().toggle()
 
     $edit_course_syllabus_form.on 'click', '.cancel_button', (ev) ->
       ev.preventDefault()
@@ -223,6 +231,9 @@ define [
         $course_syllabus.loadingImage()
 
       success: (data) ->
+        ###
+        xsslint safeString.property syllabus_body
+        ###
         $course_syllabus.loadingImage('remove').html data.course.syllabus_body
         $course_syllabus.data('syllabus_body', data.course.syllabus_body)
         $course_syllabus_details.hide()

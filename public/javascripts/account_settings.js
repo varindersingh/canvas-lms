@@ -108,25 +108,6 @@ define([
         width: 400
       });
     });
-    $(".allow_draft_help_link").click(function(event) {
-      event.preventDefault();
-      $("#allow_draft_help_dialog").dialog({
-        title: I18n.t('titles.allow_draft_help_title', "What is Draft State?"),
-        width: 400
-      });
-    });
-
-    $("#account_settings_enable_scheduler").change(function() {
-      var $enableCalendar2 = $("#account_settings_enable_scheduler");
-      var $showScheduler = $("#show_scheduler_checkbox");
-      if ($enableCalendar2.attr('checked')) {
-        $showScheduler.show();
-      }
-      else {
-        $showScheduler.hide();
-      }
-    });
-    $("#account_settings_enable_scheduler").trigger('change');
 
     $(".open_registration_delegated_warning_link").click(function(event) {
       event.preventDefault();
@@ -263,7 +244,6 @@ define([
           width: 400,
           title: I18n.t('titles.configure_report', 'Configure Report')
         });
-        $dialog.find(".datetime_field").datetime_field()
       }
       $dialog.dialog('open');
     })
@@ -310,8 +290,15 @@ define([
     displayCustomEmailFromName();
     $('.notification_from_name_option').trigger('change');
 
+    $('#account_settings_self_registration').change(function() {
+      $('#self_registration_type_radios').toggle(this.checked);
+    }).trigger('change');
+
+
+    $('.branding_section_toggler').on('change', function(){
+      $(this).prevAll('.branding_section').last().toggle(!this.checked)
+    })
+
   });
 
 });
-
-

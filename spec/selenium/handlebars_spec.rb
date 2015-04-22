@@ -1,18 +1,26 @@
 require File.expand_path(File.dirname(__FILE__) + "/common")
-require 'lib/handlebars/handlebars'
 
 describe "handlebars" do
-  it_should_behave_like "in-process server selenium tests"
+  include_examples "in-process server selenium tests"
 
   before (:each) do
     course_with_teacher_logged_in
     get "/"
   end
 
+  def run_template(template, context, locale = 'en')
+    compiled = HandlebarsTasks::Handlebars.compile_template(template, 'test', 'test')
+    driver.execute_script compiled
+    require_exec 'jst/test', <<-CS
+      I18n.locale = '#{locale}'
+      test(#{context.to_json})
+    CS
+  end
+
   it "should render templates correctly" do
 
     # need to inject the translation file onto the page because the compiled template requires it
-    driver.execute_script "define('translations/test', function(){ return {} });"
+    set_translations({})
 
     template = <<-HTML
       <h1>{{title}}</h1>
@@ -28,22 +36,19 @@ describe "handlebars" do
       <p>{{#t "unescapage"}}this is {{{unescaped}}}{{/t}}</p>
       {{#t "bye"}}welp, see you l8r! dont forget 2 <a href="{{url}}">like us</a> on facebook lol{{/t}}
     HTML
-    compiled = Handlebars.compile_template(template, 'test')
-    driver.execute_script compiled
 
-    result = require_exec 'jst/test', <<-CS
-      test
-        title: 'greetings'
-        name: 'katie'
-        type: 'yoga'
-        items: ['dont forget to stretch!!!']
-        input: '<input>'
-        url: 'http://foo.bar'
-        escaped: '<b>escaped</b>'
-        unescaped: '<b>unescaped</b>'
-    CS
+    result = run_template(template, {
+      title: 'greetings',
+      name: 'katie',
+      type: 'yoga',
+      items: ['dont forget to stretch!!!'],
+      input: '<input>',
+      url: 'http://foo.bar',
+      escaped: '<b>escaped</b>',
+      unescaped: '<b>unescaped</b>'
+    })
 
-    result.should == <<-RESULT
+    expect(result).to eq <<-RESULT
       <h1>greetings</h1>
       <p>ohai my name is katie im your <b>yoga</b> instructure!! ;) heres some tips to get you started:</p>
       <ol>
@@ -60,59 +65,80 @@ describe "handlebars" do
   end
 
   it "should require partials used within template" do
-    driver.execute_script Handlebars.compile_template("hi from inside partial", "_test_partial")
-    driver.execute_script Handlebars.compile_template("outside partial {{>test_partial}}", "test_template")
+    driver.execute_script HandlebarsTasks::Handlebars.compile_template("hi from inside partial", "_test_partial", '_test_partial')
+    driver.execute_script HandlebarsTasks::Handlebars.compile_template("outside partial {{>test_partial}}", "test_template", 'test_template')
 
     result = require_exec "jst/test_template", "test_template()"
-    result.should == "outside partial hi from inside partial"
-  end
-
-  it "should make ENV available" do
-    user_id = @user.id
-    str = "zomg %s your user id is %s"
-    driver.execute_script Handlebars.compile_template(str % ["{{name}}", "{{ENV.current_user_id}}"], "env_test")
-    driver.execute_script "window.origContext = {name: 'guy'};"
-    result = require_exec "jst/env_test", "env_test(window.origContext)"
-    result.should == str % ["guy", user_id]
-    # original context should remain unchanged
-    driver.execute_script("return window.origContext").should == {'name' => 'guy'}
+    expect(result).to eq "outside partial hi from inside partial"
   end
 
   it "should translate the content" do
     translations = {
-      :pigLatin => {
-        :sup => 'upsay',
-        :test => {
-          :it_should_work => 'isthay ouldshay ebay anslatedtray frday'
+      pigLatin: {
+        absolute_key: "Absoluteay eykay",
+        inferred_key_c49e3743: "Inferreday eykay",
+        inline_with_absolute_key: "Inlineay ithway absoluteay eykay",
+        inline_with_inferred_key_88e68761: "Inlineay ithway inferreday eykay",
+        test: {
+          inline_with_relative_key: "Inlineay ithway elativeray eykay",
+          relative_key: "Elativeray eykay"
         }
       }
     }
-
-    # get our translations into js-land
-    driver.execute_script <<-JS
-      define('translations/test', ['i18nObj', 'jquery'], function(I18n, $) {
-        $.extend(true, I18n, {translations: #{translations.to_json}});
-      });
-    JS
+    set_translations(translations)
 
     template = <<-HTML
-      <p>{{#t "#sup"}}sup{{/t}}</p>
-      <p>{{#t 'it_should_work'}}this should be translated frd{{/t}}</p>
-      <p>{{#t "not_yet_translated"}}but this shouldn't be{{/t}}</p>
+      <p>{{#t "#absolute_key"}}Absolute key{{/t}}</p>
+      <p>{{#t "relative_key"}}Relative key{{/t}}</p>
+      <p>{{#t}}Inferred key{{/t}}</p>
+
+      <p>{{t "#inline_with_absolute_key" "Inline with absolute key"}}</p>
+      <p>{{t "inline_with_relative_key" "Inline with relative key"}}</p>
+      <p>{{t "Inline with inferred key"}}</p>
+
+      <p>{{#t "not_yet_translated"}}No translation yet{{/t}}</p>
     HTML
 
-    compiled = Handlebars.compile_template(template, 'test')
-    driver.execute_script compiled
+    expect(run_template(template, {}, 'pigLatin')).to eq <<-HTML
+      <p>Absoluteay eykay</p>
+      <p>Elativeray eykay</p>
+      <p>Inferreday eykay</p>
 
-    result = require_exec 'jst/test', <<-CS
-      I18n.locale = 'pigLatin'
-      test()
-    CS
+      <p>Inlineay ithway absoluteay eykay</p>
+      <p>Inlineay ithway elativeray eykay</p>
+      <p>Inlineay ithway inferreday eykay</p>
 
-    result.should == <<-HTML
-      <p>#{translations[:pigLatin][:sup]}</p>
-      <p>#{translations[:pigLatin][:test][:it_should_work]}</p>
-      <p>but this shouldn't be</p>
+      <p>No translation yet</p>
+    HTML
+  end
+
+  it "should properly apply wrappers for both defaults and translations" do
+    set_translations({fr: {croissant: "*Je voudrais un croissant*"}})
+
+    template = <<-HTML
+      <p>
+        {{#t "#croissant"}}
+          <b>
+            I'd like a croissant, please
+          </b>
+        {{/t}}
+      </p>
+      <p>
+        {{#t "#not_translated"}}
+          <i>
+            Yes, that's true, he would
+          </i>
+        {{/t}}
+      </p>
+    HTML
+
+    expect(run_template(template, {}, 'fr')).to eq <<-HTML
+      <p>
+        <b>Je voudrais un croissant</b>
+      </p>
+      <p>
+        <i> Yes, that&#39;s true, he would </i>
+      </p>
     HTML
   end
 end

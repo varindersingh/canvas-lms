@@ -1,32 +1,7 @@
 require File.expand_path(File.dirname(__FILE__) + '/helpers/wiki_and_tiny_common')
 
 describe "Wiki pages and Tiny WYSIWYG editor Files" do
-  it_should_behave_like "in-process server selenium tests"
-
-  def add_file_to_rce
-    wiki_page_tools_file_tree_setup
-    wait_for_tiny(keep_trying_until { f("#new_wiki_page") })
-    f('.wiki_switch_views_link').click
-    wiki_page_body = clear_wiki_rce
-    f('.wiki_switch_views_link').click
-    f('#editor_tabs .ui-tabs-nav li:nth-child(2) a').click
-    root_folders = @tree1.find_elements(:css, 'li.folder')
-    root_folders.first.find_element(:css, '.sign.plus').click
-    wait_for_ajaximations
-    root_folders.first.find_elements(:css, '.file.text').length.should == 1
-    root_folders.first.find_elements(:css, '.file.text span').first.click
-
-    in_frame "wiki_page_body_ifr" do
-      f('#tinymce').should include_text('txt')
-    end
-    f('.wiki_switch_views_link').click
-    find_css_in_string(wiki_page_body[:value], '.instructure_file_link').should_not be_empty
-    submit_form('#new_wiki_page')
-    wait_for_ajax_requests
-    get "/courses/#{@course.id}/wiki" #can't just wait for the dom, for some reason it stays in edit mode
-    wait_for_ajax_requests
-  end
-
+  include_examples "in-process server selenium tests"
 
   context "wiki and tiny files as a teacher" do
 
@@ -51,31 +26,113 @@ describe "Wiki pages and Tiny WYSIWYG editor Files" do
       end
     end
 
+    describe "keyboard navigation and accessiblity" do
+      context "when on the Files tab" do
+        before do
+          wiki_page_tools_file_tree_setup
+          f('#editor_tabs .ui-tabs-nav li:nth-child(2) a').click
+          driver.execute_script('$("#editor_tabs .ui-tabs-nav li:nth-child(2) a").focus()')
+        end
+
+        it "sets the first root folder with aria-selected=true when initialized" do
+          root_folder = @tree1.find_elements(:css, '[role="treeitem"]').first
+          expect(root_folder.attribute('aria-selected')).to eq "true"
+        end
+
+        it "expands a folder when you press the right allow key" do
+          root_folder = @tree1.find_elements(:css, '[role="treeitem"]').first
+          @tree1.send_keys :arrow_right
+          wait_for_ajaximations
+          expect(root_folder.attribute('aria-expanded')).to eq "true"
+        end
+
+        it "goes to the first child when pressing the right arrow on an expanded folder" do
+          root_folder = @tree1.find_elements(:css, '[role="treeitem"]').first
+          @tree1.send_keys :arrow_right
+          wait_for_ajaximations
+          @tree1.send_keys :arrow_right
+          wait_for_ajaximations
+          selected = @tree1.find_elements(:css, '[aria-selected="true"]').first
+          expect(selected.attribute('id')).to eq root_folder.find_elements(:css, '[role="treeitem"]').first.attribute('id')
+        end
+
+        it "collapes folders when pressing the left arrow" do
+          root_folder = @tree1.find_elements(:css, '[role="treeitem"]').first
+          @tree1.send_keys :arrow_right
+          wait_for_ajaximations
+          expect(root_folder.attribute('aria-expanded')).to eq "true"
+
+          @tree1.send_keys :arrow_left
+          wait_for_ajaximations
+          expect(root_folder.attribute('aria-expanded')).to eq "false"
+        end
+
+        it "goes to the next file avalible when pressing down" do 
+          root_folder = @tree1.find_elements(:css, '[role="treeitem"]').first
+          @tree1.send_keys :arrow_right
+          wait_for_ajaximations
+          @tree1.send_keys :arrow_down
+          wait_for_ajaximations
+          selected = @tree1.find_elements(:css, '[aria-selected="true"]').first
+          expect(selected.attribute('id')).to eq root_folder.find_elements(:css, '[role="treeitem"]').first.attribute('id')
+        end
+
+        it "goes to the prevous file avalible when pressing up" do 
+          root_folder = @tree1.find_elements(:css, '[role="treeitem"]').first
+          @tree1.send_keys :arrow_right
+          wait_for_ajaximations
+          @tree1.send_keys :arrow_down
+          wait_for_ajaximations
+          @tree1.send_keys :arrow_up
+          wait_for_ajaximations
+
+          selected = @tree1.find_elements(:css, '[aria-selected="true"]').first
+          expect(selected.attribute('id')).to eq root_folder.attribute('id')
+
+        end
+
+        it "doesn't change aria-selected when pressing enter" do
+          root_folder = @tree1.find_elements(:css, '[role="treeitem"]').first
+          @tree1.send_keys :arrow_right
+          wait_for_ajaximations
+          @tree1.send_keys :arrow_down
+          wait_for_ajaximations
+          @tree1.send_keys :arrow_down
+          wait_for_ajaximations
+          @tree1.send_keys :arrow_down
+          wait_for_ajaximations
+          @tree1.send_keys(:return)
+          selected = @tree1.find_elements(:css, '[aria-selected="true"]').first
+          expect(selected.attribute('id')).to eq root_folder.find_elements(:css, '[role="treeitem"]')[2].attribute('id')
+        end
+      end
+
+    end
     it "should lazy load files" do
       wiki_page_tools_file_tree_setup
       f('#editor_tabs .ui-tabs-nav li:nth-child(2) a').click
 
       root_folders = @tree1.find_elements(:css, 'li.folder')
-      root_folders.length.should == 1
-      root_folders.first.find_element(:css, '.name').text.should == 'course files'
+      expect(root_folders.length).to eq 1
+      expect(root_folders.first.find_element(:css, '.name').text).to include_text('course files')
 
       root_folders.first.find_element(:css, '.sign.plus').click
       wait_for_ajaximations
 
       sub_folders = root_folders.first.find_elements(:css, 'li.folder')
-      sub_folders.length.should == 1
-      sub_folders.first.find_element(:css, '.name').text.should == 'subfolder'
+      expect(sub_folders.length).to eq 1
+      expect(sub_folders.first.find_element(:css, '.name').text).to include_text('subfolder')
 
       text_file = root_folders.first.find_elements(:css, 'li.file.text')
-      text_file.length.should == 1
-      text_file.first.find_element(:css, '.name').text.should == 'text_file.txt'
+      expect(text_file.length).to eq 1
+      expect(text_file.first.find_element(:css, '.name').text).to include_text('text_file.txt')
 
       sub_folders.first.find_element(:css, '.sign.plus').click
       wait_for_ajaximations
 
       sub_sub_folders = sub_folders.first.find_elements(:css, 'li.folder')
-      sub_sub_folders.length.should == 1
-      sub_sub_folders.first.find_element(:css, '.name').text.should == 'subsubfolder'
+      expect(sub_sub_folders.length).to eq 1
+      expect(sub_sub_folders.first.find_element(:css, '.name').text).to include_text('subsubfolder')
 
     end
 
@@ -84,17 +141,18 @@ describe "Wiki pages and Tiny WYSIWYG editor Files" do
       f('#editor_tabs .ui-tabs-nav li:nth-child(2) a').click
 
       select = f('#attachment_folder_id')
-      select.find_elements(:css, 'option').length.should == 1
+      expect(select.find_elements(:css, 'option').length).to eq 1
 
       f('.upload_new_file_link').click
       keep_trying_until { select.find_elements(:css, 'option').length > 1 }
-      select.find_elements(:css, 'option').length.should == 3
+      expect(select.find_elements(:css, 'option').length).to eq 3
     end
 
     it "should be able to upload a file when nothing has been loaded" do
       wiki_page_tools_file_tree_setup
-      keep_trying_until { f("#new_wiki_page").should be_displayed }
-      f('.wiki_switch_views_link').click
+      keep_trying_until { expect(f("form.edit-form .edit-content")).to be_displayed }
+
+      fj('a.switch_views:visible').click
       clear_wiki_rce
       f('#editor_tabs .ui-tabs-nav li:nth-child(2) a').click
       first_folder = @tree1.find_elements(:css, 'li.folder').first
@@ -118,58 +176,55 @@ describe "Wiki pages and Tiny WYSIWYG editor Files" do
       end
       wiki_page_tools_upload_file('#sidebar_upload_file_form', :text)
       wait_for_ajaximations
-      keep_trying_until { f('.file_list').should include_text('testfile') }
+      keep_trying_until { expect(f('.file_list')).to include_text('testfile') }
     end
 
     it "should show uploaded files in file tree and add them to the rce" do
       wiki_page_tools_file_tree_setup
-      wait_for_tiny(keep_trying_until { f("#new_wiki_page") })
-      f('.wiki_switch_views_link').click
+      wait_for_tiny(keep_trying_until { f("form.edit-form .edit-content") })
+      fj('a.switch_views:visible').click
       clear_wiki_rce
-      f('.wiki_switch_views_link').click
+      fj('a.switch_views:visible').click
       f('#editor_tabs .ui-tabs-nav li:nth-child(2) a').click
       f('.upload_new_file_link').click
 
       root_folders = @tree1.find_elements(:css, 'li.folder')
       root_folders.first.find_element(:css, '.sign.plus').click
       wait_for_ajaximations
-      root_folders.first.find_elements(:css, '.file.text').length.should == 1
+      expect(root_folders.first.find_elements(:css, '.file.text').length).to eq 1
 
       wiki_page_tools_upload_file('#sidebar_upload_file_form', :text)
 
-      root_folders.first.find_elements(:css, '.file.text').length.should == 2
-      in_frame "wiki_page_body_ifr" do
-        f('#tinymce').should include_text('txt')
+      expect(root_folders.first.find_elements(:css, '.file.text').length).to eq 2
+      in_frame wiki_page_body_ifr_id do
+        expect(f('#tinymce')).to include_text('txt')
       end
 
-      submit_form('#new_wiki_page')
-      wait_for_ajax_requests
-      get "/courses/#{@course.id}/wiki" #can't just wait for the dom, for some reason it stays in edit mode
+      f('form.edit-form button.submit').click
       wait_for_ajax_requests
 
-      check_file(f('#wiki_body .instructure_file_link_holder a'))
-
+      check_file(f('#wiki_page_show .instructure_file_link_holder a'))
     end
 
     it "should not show uploaded files in image list" do
       wiki_page_tools_file_tree_setup
-      wait_for_tiny(keep_trying_until { f("#new_wiki_page") })
+      wait_for_tiny(keep_trying_until { f("form.edit-form .edit-content") })
       f('#editor_tabs .ui-tabs-nav li:nth-child(3) a').click
       f('.upload_new_image_link').click
-      f('.wiki_switch_views_link').click
+      fj('a.switch_views:visible').click
       wiki_page_body = clear_wiki_rce
       wait_for_ajaximations
-      keep_trying_until { @image_list.find_elements(:css, 'img.img').length.should == 2 }
+      keep_trying_until { expect(@image_list.find_elements(:css, 'img.img').length).to eq 2 }
 
       wiki_page_tools_upload_file('#sidebar_upload_image_form', :text)
 
-      @image_list.find_elements(:css, 'img.img').length.should == 2
-      wiki_page_body[:value].should be_empty
+      expect(@image_list.find_elements(:css, 'img.img').length).to eq 2
+      expect(wiki_page_body[:value]).to be_empty
     end
 
     it "should be able to upload a file and add the file to the rce" do
       add_file_to_rce
-      check_file(f('#wiki_body .instructure_file_link_holder a'))
+      check_file(f('#wiki_page_show .instructure_file_link_holder a'))
     end
 
     it "should show files uploaded on the images tab in the file tree" do
@@ -178,21 +233,21 @@ describe "Wiki pages and Tiny WYSIWYG editor Files" do
       root_folders = @tree1.find_elements(:css, 'li.folder')
       root_folders.first.find_element(:css, '.sign.plus').click
       wait_for_ajaximations
-      root_folders.first.find_elements(:css, '.file.text').length.should == 1
+      expect(root_folders.first.find_elements(:css, '.file.text').length).to eq 1
 
-      wait_for_tiny(keep_trying_until { f("#new_wiki_page") })
+      wait_for_tiny(keep_trying_until { f("form.edit-form .edit-content") })
       f('#editor_tabs .ui-tabs-nav li:nth-child(3) a').click
       f('.upload_new_image_link').click
-      f('.wiki_switch_views_link').click
+      fj('a.switch_views:visible').click
       wiki_page_body = clear_wiki_rce
       wait_for_ajaximations
-      keep_trying_until { @image_list.find_elements(:css, 'img.img').length.should == 2 }
+      keep_trying_until { expect(@image_list.find_elements(:css, 'img.img').length).to eq 2 }
 
       wiki_page_tools_upload_file('#sidebar_upload_image_form', :text)
 
-      root_folders.first.find_elements(:css, '.file.text').length.should == 2
-      @image_list.find_elements(:css, 'img.img').length.should == 2
-      wiki_page_body[:value].should be_empty
+      expect(root_folders.first.find_elements(:css, '.file.text').length).to eq 2
+      expect(@image_list.find_elements(:css, 'img.img').length).to eq 2
+      expect(wiki_page_body[:value]).to be_empty
     end
   end
 
@@ -209,7 +264,7 @@ describe "Wiki pages and Tiny WYSIWYG editor Files" do
 
       get "/courses/#{@course.id}/discussion_topics/new"
       f('#editor_tabs .ui-tabs-nav li:nth-child(2) a').click
-      ff('li.folder').count.should == 1
+      expect(ff('li.folder').count).to eq 1
     end
 
     it "should show root folder in the sidebar if it is hidden" do
@@ -218,17 +273,17 @@ describe "Wiki pages and Tiny WYSIWYG editor Files" do
 
       get "/courses/#{@course.id}/discussion_topics/new"
       f('#editor_tabs .ui-tabs-nav li:nth-child(2) a').click
-      ff('li.folder').count.should == 1
+      expect(ff('li.folder').count).to eq 1
     end
 
     it "should show root folder in the sidebar if the files navigation tab is hidden" do
-      pending('broken')
+      skip('broken')
       @course.tab_configuration = [{:id => Course::TAB_FILES, :hidden => true}]
       @course.save!
 
       get "/courses/#{@course.id}/discussion_topics/new"
       f('#editor_tabs .ui-tabs-nav li:nth-child(2) a').click
-      ff('li.folder').count.should == 1
+      expect(ff('li.folder').count).to eq 1
     end
 
     it "should show sub-folder in the sidebar if it is locked" do
@@ -236,11 +291,11 @@ describe "Wiki pages and Tiny WYSIWYG editor Files" do
 
       get "/courses/#{@course.id}/discussion_topics/new"
       f('#editor_tabs .ui-tabs-nav li:nth-child(2) a').click
-      f('li.folder').should_not be_nil
+      expect(f('li.folder')).not_to be_nil
       f('li.folder span').click
       wait_for_ajaximations
-      ff('li.folder li.folder').count.should == 2
-      f('li.folder li.folder .name').text.should == "visible subfolder"
+      expect(ff('li.folder li.folder').count).to eq 2
+      expect(f('li.folder li.folder .name').text).to include_text("visible subfolder")
     end
 
     it "should show sub-folder in the sidebar if it is hidden" do
@@ -248,10 +303,10 @@ describe "Wiki pages and Tiny WYSIWYG editor Files" do
 
       get "/courses/#{@course.id}/discussion_topics/new"
       f('#editor_tabs .ui-tabs-nav li:nth-child(2) a').click
-      f('li.folder').should_not be_nil
+      expect(f('li.folder')).not_to be_nil
       f('li.folder span').click
       wait_for_ajaximations
-      ff('li.folder li.folder').count.should == 2
+      expect(ff('li.folder li.folder').count).to eq 2
     end
 
     it "should show file in the sidebar if it is hidden" do
@@ -267,7 +322,7 @@ describe "Wiki pages and Tiny WYSIWYG editor Files" do
       keep_trying_until do
         fj('li.folder span').click
         wait_for_ajaximations
-        ff('li.folder li.file').count.should == 2
+        expect(ff('li.folder li.file').count).to eq 2
       end
     end
 
@@ -284,7 +339,7 @@ describe "Wiki pages and Tiny WYSIWYG editor Files" do
       keep_trying_until do
         fj('li.folder span').click
         wait_for_ajaximations
-        ff('li.folder li.file').count.should == 2
+        expect(ff('li.folder li.file').count).to eq 2
       end
     end
   end
@@ -311,7 +366,7 @@ describe "Wiki pages and Tiny WYSIWYG editor Files" do
       get "/courses/#{@course.id}/discussion_topics/new"
       f('#editor_tabs .ui-tabs-nav li:nth-child(3) a').click
       wait_for_ajaximations
-      ff('.image_list img.img').count.should == 2
+      expect(ff('.image_list img.img').count).to eq 2
     end
 
     it "should show image files if their containing folder is hidden" do
@@ -321,7 +376,7 @@ describe "Wiki pages and Tiny WYSIWYG editor Files" do
       get "/courses/#{@course.id}/discussion_topics/new"
       f('#editor_tabs .ui-tabs-nav li:nth-child(3) a').click
       wait_for_ajaximations
-      ff('.image_list img.img').count.should == 2
+      expect(ff('.image_list img.img').count).to eq 2
     end
 
     it "should show image files if the files navigation tab is hidden" do
@@ -331,7 +386,7 @@ describe "Wiki pages and Tiny WYSIWYG editor Files" do
       get "/courses/#{@course.id}/discussion_topics/new"
       f('#editor_tabs .ui-tabs-nav li:nth-child(3) a').click
       wait_for_ajaximations
-      ff('.image_list img.img').count.should == 2
+      expect(ff('.image_list img.img').count).to eq 2
     end
 
     it "should show image files if they are hidden" do
@@ -341,7 +396,7 @@ describe "Wiki pages and Tiny WYSIWYG editor Files" do
       get "/courses/#{@course.id}/discussion_topics/new"
       f('#editor_tabs .ui-tabs-nav li:nth-child(3) a').click
       wait_for_ajaximations
-      ff('.image_list img.img').count.should == 2
+      expect(ff('.image_list img.img').count).to eq 2
     end
 
     it "should show image files if they are locked" do
@@ -351,7 +406,7 @@ describe "Wiki pages and Tiny WYSIWYG editor Files" do
       get "/courses/#{@course.id}/discussion_topics/new"
       f('#editor_tabs .ui-tabs-nav li:nth-child(3) a').click
       wait_for_ajaximations
-      ff('.image_list img.img').count.should == 2
+      expect(ff('.image_list img.img').count).to eq 2
     end
   end
 end

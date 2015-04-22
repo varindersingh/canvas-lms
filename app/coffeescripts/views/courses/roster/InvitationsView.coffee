@@ -25,18 +25,21 @@ define [
       @showDialogButtons()
 
       data = @model.toJSON()
-      data.time = $.parseFromISO(_.last(@model.get('enrollments')).updated_at).datetime_formatted
+      data.time = $.datetimeString(_.last(@model.get('enrollments')).updated_at)
       @$el.html invitationsViewTemplate data
 
-      pending = @model.pending()
+      pending = @invitationIsPending()
       admin = @$el.parents(".teacher_enrollments,.ta_enrollments").length > 0
       @$('.student_enrollment_re_send').showIf(pending && !admin)
       @$('.admin_enrollment_re_send').showIf(pending && admin)
       @$('.accepted_enrollment_re_send').showIf(!pending)
-      if pending && !admin && !data.course.available
+      if pending && !admin && data.course && !data.course.available
         @hideDialogButtons()
 
       this
+
+    invitationIsPending: ()->
+      @model.pending(@model.currentRole)
 
     showDialogButtons: ->
       @$el.parent().next('.ui-dialog-buttonpane').show()

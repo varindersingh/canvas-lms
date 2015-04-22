@@ -1,7 +1,8 @@
 define [
+  'jquery'
   'compiled/util/hsvToRgb'
   'vendor/murmurhash'
-], (hsvToRgb, murmurhash) ->
+], ($, hsvToRgb, murmurhash) ->
 
   seed = 1
   [bgSaturation, bgBrightness]         = [30, 96]
@@ -30,5 +31,5 @@ define [
         }
 
       """
-    $('<div/>').html("<style>#{css.join('')}</style>").appendTo(document.body)
+    $('<div/>').html("<style>#{$.raw(css.join(''))}</style>").appendTo(document.body)
 

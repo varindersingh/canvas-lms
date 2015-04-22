@@ -24,7 +24,7 @@ require 'coffee-script'
 require File.expand_path(File.dirname(__FILE__) + '/helpers/custom_selenium_rspec_matchers')
 include I18nUtilities
 
-SELENIUM_CONFIG = Setting.from_config("selenium") || {}
+SELENIUM_CONFIG = ConfigFile.load("selenium") || {}
 SERVER_IP = SELENIUM_CONFIG[:server_ip] || UDPSocket.open { |s| s.connect('8.8.8.8', 1); s.addr.last }
 BIND_ADDRESS = SELENIUM_CONFIG[:bind_address] || '0.0.0.0'
 SECONDS_UNTIL_COUNTDOWN = 5
@@ -34,10 +34,8 @@ MAX_SERVER_START_TIME = 60
 #NEED BETTER variable handling
 THIS_ENV = ENV['TEST_ENV_NUMBER'].to_i
 THIS_ENV = 1 if ENV['TEST_ENV_NUMBER'].blank?
-PORT_NUM = (4440 + THIS_ENV)
-ENV['WEBSERVER'].nil? ? WEBSERVER = 'thin' : WEBSERVER = ENV['WEBSERVER']
+ENV['WEBSERVER'].nil? ? WEBSERVER = 'webrick' : WEBSERVER = ENV['WEBSERVER']
 #set WEBSERVER ENV to webrick to change webserver
-
 
 $server_port = nil
 $app_host_and_port = nil
@@ -55,85 +53,165 @@ end
 
 module SeleniumTestsHelperMethods
   def setup_selenium
+
+    browser = SELENIUM_CONFIG[:browser].try(:to_sym) || :firefox
+    host_and_port
+
+    if path = SELENIUM_CONFIG[:paths].try(:[], browser)
+      Selenium::WebDriver.const_get(browser.to_s.capitalize).path = path
+    end
+
+    driver = if browser == :firefox
+               firefox_driver
+             elsif browser == :chrome
+               chrome_driver
+             elsif browser == :ie
+               ie_driver
+             end
+
+    driver.manage.timeouts.implicit_wait = 3
+    driver
+  end
+
+  def ie_driver
+    require 'testingbot'
+    require 'testingbot/tunnel'
+
+    puts "using IE driver"
+
+    caps = Selenium::WebDriver::Remote::Capabilities.ie
+    caps.version = "10"
+    caps.platform = :WINDOWS
+    caps[:unexpectedAlertBehaviour] = 'ignore'
+
+    Selenium::WebDriver.for(
+        :remote,
+        :url => "http://#{SELENIUM_CONFIG[:testingbot_key]}:#{SELENIUM_CONFIG[:testingbot_secret]}@hub.testingbot.com:4444/wd/hub",
+        :desired_capabilities => caps)
+
+  end
+
+  def firefox_driver
+    puts "using FIREFOX driver"
+    profile = firefox_profile
+    caps = Selenium::WebDriver::Remote::Capabilities.firefox(:unexpectedAlertBehaviour => 'ignore')
+
+    if SELENIUM_CONFIG[:host_and_port]
+      caps.firefox_profile = profile
+      stand_alone_server_firefox_driver(caps)
+    else
+      ruby_firefox_driver(profile: profile, desired_capabilities: caps)
+    end
+  end
+
+  def chrome_driver
+    puts "using CHROME driver"
+    if SELENIUM_CONFIG[:host_and_port]
+      stand_alone_server_chrome_driver
+    else
+      ruby_chrome_driver
+    end
+  end
+
+  def ruby_chrome_driver
+    driver = nil
+    begin
+      tries ||= 3
+      puts "Thread: provisioning selenium chrome ruby driver"
+      driver = Selenium::WebDriver.for :chrome
+    rescue Exception => e
+      puts "Thread #{THIS_ENV}\n try ##{tries}\nError attempting to start remote webdriver: #{e}"
+      sleep 2
+      retry unless (tries -= 1).zero?
+    end
+    driver
+  end
+
+  def stand_alone_server_chrome_driver
+    driver = nil
+    3.times do |times|
+      begin
+        driver = Selenium::WebDriver.for(
+            :remote,
+            :url => 'http://' + (SELENIUM_CONFIG[:host_and_port] || "localhost:4444") + '/wd/hub',
+            :desired_capabilities => :chrome
+        )
+        break
+      rescue Exception => e
+        puts "Error attempting to start remote webdriver: #{e}"
+        raise e if times == 2
+      end
+    end
+    driver
+  end
+
+  def ruby_firefox_driver(options)
+    driver = nil
+    begin
+      tries ||= 3
+      puts "Thread: provisioning selenium ruby firefox driver"
+      driver = Selenium::WebDriver.for(:firefox, options)
+    rescue Exception => e
+      puts "Thread #{THIS_ENV}\n try ##{tries}\nError attempting to start remote webdriver: #{e}"
+      sleep 2
+      retry unless (tries -= 1).zero?
+    end
+    driver
+  end
+
+  def stand_alone_server_firefox_driver(caps)
+    driver = nil
+    3.times do |times|
+      begin
+        driver = Selenium::WebDriver.for(
+            :remote,
+            :url => 'http://' + (SELENIUM_CONFIG[:host_and_port] || "localhost:4444") + '/wd/hub',
+            :desired_capabilities => caps
+        )
+        break
+      rescue Exception => e
+        puts "Error attempting to start remote webdriver: #{e}"
+        raise e if times == 2
+      end
+    end
+    driver
+  end
+
+  def firefox_profile
+    profile = Selenium::WebDriver::Firefox::Profile.new
+    profile.load_no_focus_lib=(true)
+    profile.native_events = true
+
+    if SELENIUM_CONFIG[:firefox_profile].present?
+      profile = Selenium::WebDriver::Firefox::Profile.from_name(SELENIUM_CONFIG[:firefox_profile])
+    end
+    profile
+  end
+
+  def host_and_port
     if SELENIUM_CONFIG[:host] && SELENIUM_CONFIG[:port] && !SELENIUM_CONFIG[:host_and_port]
       SELENIUM_CONFIG[:host_and_port] = "#{SELENIUM_CONFIG[:host]}:#{SELENIUM_CONFIG[:port]}"
     end
-    native = SELENIUM_CONFIG[:native_events] || false
-    browser = SELENIUM_CONFIG[:browser].try(:to_sym) || :firefox
-    if !SELENIUM_CONFIG[:host_and_port]
-      options = {}
-      if browser == :firefox
-        profile = Selenium::WebDriver::Firefox::Profile.new
-        profile.load_no_focus_lib=(true)
-        if SELENIUM_CONFIG[:firefox_profile].present?
-          profile = Selenium::WebDriver::Firefox::Profile.from_name(SELENIUM_CONFIG[:firefox_profile])
-        end
-        profile.native_events = native
-        options[:profile] = profile
-      end
-      if path = SELENIUM_CONFIG[:paths].try(:[], browser)
-        Selenium::WebDriver.const_get(browser.to_s.capitalize).path = path
-      end
-      driver = Selenium::WebDriver.for(browser, options)
-    else
-      caps = SELENIUM_CONFIG[:browser].try(:to_sym) || :firefox
-      if caps == :firefox
-        profile = Selenium::WebDriver::Firefox::Profile.new
-        profile.load_no_focus_lib=(true)
-        if SELENIUM_CONFIG[:firefox_profile].present?
-          profile = Selenium::WebDriver::Firefox::Profile.from_name SELENIUM_CONFIG[:firefox_profile]
-        end
-        caps = Selenium::WebDriver::Remote::Capabilities.firefox(:firefox_profile => profile)
-        caps.native_events = native
-      end
-
-      driver = nil
-      puts 'setting up selenium server'
-      start_selenium_server_node
-      #curbs race conditions on selenium grid nodes
-      stagger_threads
-      begin
-        tries ||= 20
-        puts "Thread #{THIS_ENV} connecting to hub over port #{PORT_NUM}, try ##{tries}"
-        driver = Selenium::WebDriver.for(
-            :remote,
-            :url => "http://127.0.0.1:#{PORT_NUM}/wd/hub",
-            :desired_capabilities => caps
-        )
-      rescue Exception => e
-        puts "Thread #{THIS_ENV}\n try ##{tries}\nError attempting to start remote webdriver: #{e}"
-        sleep 2
-        retry unless (tries -= 1).zero?
-      end
-    end
-    driver.manage.timeouts.implicit_wait = 10
-    driver
   end
 
   def set_native_events(setting)
     driver.instance_variable_get(:@bridge).instance_variable_get(:@capabilities).instance_variable_set(:@native_events, setting)
   end
 
-  def start_selenium_server_node
-    puts "stopping selenium server node: #{THIS_ENV}"
-    `selenium_procs=$(ps -ef | grep #{PORT_NUM} | awk '{print $2}') && kill -9 $selenium_procs`
-    `sudo rm -rf /tmp/.X#{THIS_ENV}-lock`
-    `xvfb_procs=$(ps -ef | grep 'Xvfb :#{THIS_ENV}' | awk '{print $2}') && kill -9 $xvfb_procs`
-    puts "restarting xvfb screen and selenium server node: #{THIS_ENV}"
-    sleep 7
-    `Xvfb :#{THIS_ENV} -ac -noreset -screen 0 1280x1024x24 &`
-    sleep 2
-    #add configs for selenium version
-    `export DISPLAY=:#{THIS_ENV} && java -Djava.io.tmpdir=/tmp/node#{THIS_ENV} -jar /usr/lib/selenium/selenium-server-standalone-#{SELENIUM_CONFIG[:version]}.jar -port #{PORT_NUM} -timeout 60000  > /var/log/selenium/selenium-output#{THIS_ENV}.log 2> /var/log/selenium/selenium-error#{THIS_ENV}.log & echo $! > /selenium/selenium#{THIS_ENV}.pid &`
-    sleep 5
-    puts "selenium server node: #{THIS_ENV} has been restarted"
-  end
 
-
-  # f means "find" this is a shortcut to finding elements
+# f means "find" this is a shortcut to finding elements
   def f(selector, scope = nil)
     begin
       (scope || driver).find_element :css, selector
+    rescue
+      nil
+    end
+  end
+
+  # short for find with link
+  def fln(link_text, scope = nil)
+    begin
+      (scope || driver).find_element :link, link_text
     rescue
       nil
     end
@@ -148,7 +226,7 @@ module SeleniumTestsHelperMethods
     end
   end
 
-  # same as `f` except tries to find several elements instead of one
+# same as `f` except tries to find several elements instead of one
   def ff(selector, scope = nil)
     begin
       (scope || driver).find_elements :css, selector
@@ -157,7 +235,7 @@ module SeleniumTestsHelperMethods
     end
   end
 
-  # same as find with jquery but tries to find several elements instead of one
+# same as find with jquery but tries to find several elements instead of one
   def ffj(selector, scope = nil)
     begin
       find_all_with_jquery selector, scope
@@ -166,16 +244,10 @@ module SeleniumTestsHelperMethods
     end
   end
 
-  #this is needed for using the before_label function in I18nUtilities
+#this is needed for using the before_label function in I18nUtilities
   def t(*a, &b)
     I18n.t(*a, &b)
   end
-
-  def stagger_threads(step_time = 6)
-    wait_time = THIS_ENV * step_time
-    sleep(wait_time)
-  end
-
 
   def app_host
     "http://#{$app_host_and_port}"
@@ -195,7 +267,16 @@ module SeleniumTestsHelperMethods
     s.bind(Addrinfo.tcp(SERVER_IP, 0))
 
     $server_port = s.local_address.ip_port
-    $app_host_and_port = "#{s.local_address.ip_address}:#{s.local_address.ip_port}"
+
+
+    server_ip = if SELENIUM_CONFIG[:browser] == 'ie'
+                  ##makes default URL for selenium the external IP of the box for standalone sel servers
+                  `curl http://instance-data/latest/meta-data/public-ipv4` ##command for aws boxes gets external ip
+                else
+                  s.local_address.ip_address
+                end
+
+    $app_host_and_port = "#{server_ip}:#{s.local_address.ip_port}"
     puts "found available port: #{$app_host_and_port}"
 
     return $server_port
@@ -230,12 +311,52 @@ module SeleniumTestsHelperMethods
   def self.rack_app()
     app = Rack::Builder.new do
       use Rails::Rack::Debugger unless Rails.env.test?
-      map '/' do
-        use Rails::Rack::Static
-        run ActionController::Dispatcher.new
-      end
+      run CanvasRails::Application
     end.to_app
-    return app
+
+    lambda do |env|
+      nope = [503, {}, [""]]
+      return nope unless allow_requests?
+
+      # wrap request in a mutex so we can ensure it doesn't span spec
+      # boundaries (see clear_requests!)
+      result = request_mutex.synchronize { app.call(env) }
+
+      # check if the spec just finished while we ran, and if so prevent
+      # side effects like redirects (and thus moar requests)
+      if allow_requests?
+        result
+      else
+        # make sure we clean up the body of requests we throw away
+        # https://github.com/rack/rack/issues/658#issuecomment-38476120
+        result.last.close if result.last.respond_to?(:close)
+        nope
+      end
+    end
+  end
+
+  class << self
+    def disallow_requests!
+      # ensure the current in-flight request (if any, AJAX or otherwise)
+      # finishes up its work, and prevent any subsequent requests before the
+      # next spec gets underway. otherwise race conditions can cause sadness
+      # with our shared conn and transactional fixtures (e.g. special
+      # accounts and their caching)
+      @allow_requests = false
+      request_mutex.synchronize { }
+    end
+
+    def allow_requests!
+      @allow_requests = true
+    end
+
+    def allow_requests?
+      @allow_requests
+    end
+
+    def request_mutex
+      @request_mutex ||= Mutex.new
+    end
   end
 
   def self.start_in_process_thin_server
@@ -260,24 +381,24 @@ module SeleniumTestsHelperMethods
     driver.execute_script(CoffeeScript.compile(script), *args)
   end
 
-  # a varable named `callback` is injected into your function for you, just call it to signal you are done.
+# a varable named `callback` is injected into your function for you, just call it to signal you are done.
   def exec_async_cs(script, *args)
     to_compile = "var callback = arguments[arguments.length - 1]; #{CoffeeScript.compile(script)}"
     driver.execute_async_script(script, *args)
   end
 
-  # usage
-  # require_exec 'compiled/util/foo', 'bar', <<-CS
-  #   foo('something')
-  #   # optionally I should be able to do
-  #   bar 'something else', ->
-  #     "stuff"
-  #     callback('i made it')
-  #
-  # CS
-  #
-  # simple usage
-  # require_exec 'i18n!messages', 'i18n.t("foobar")'
+# usage
+# require_exec 'compiled/util/foo', 'bar', <<-CS
+#   foo('something')
+#   # optionally I should be able to do
+#   bar 'something else', ->
+#     "stuff"
+#     callback('i made it')
+#
+# CS
+#
+# simple usage
+# require_exec 'i18n!messages', 'i18n.t("foobar")'
   def require_exec(*args)
     code = args.last
     things_to_require = {}
@@ -306,6 +427,22 @@ module SeleniumTestsHelperMethods
     driver.execute_async_script(js)
   end
 
+  # add some JS translations to the current page; they'll be merged in at
+  # the root level, so the top-most key should be the locale, e.g.
+  #
+  #   set_translations fr: {key: "Bonjour"}
+  def set_translations(translations)
+    add_translations = "$.extend(true, I18n, {translations: #{translations.to_json}});"
+    if ENV['USE_OPTIMIZED_JS']
+      driver.execute_script <<-JS
+        define('translations/test', ['i18nObj', 'jquery'], function(I18n, $) {
+          #{add_translations}
+        });
+      JS
+    else
+      driver.execute_script add_translations
+    end
+  end
 end
 
 shared_examples_for "all selenium tests" do
@@ -314,7 +451,7 @@ shared_examples_for "all selenium tests" do
   include CustomSeleniumRspecMatchers
 
   # set up so you can use rails urls helpers in your selenium tests
-  include ActionController::UrlWriter
+  include Rails.application.routes.url_helpers
 
   def selenium_driver;
     $selenium_driver
@@ -331,12 +468,11 @@ shared_examples_for "all selenium tests" do
   end
 
   def login_as(username = "nobody@example.com", password = "asdfasdf", expect_success = true)
-    # log out (just in case)
-    driver.navigate.to(app_host + '/logout')
-
+    destroy_session(true)
+    driver.navigate.to(app_host + '/login')
     if expect_success
       expect_new_page_load { fill_in_login_form(username, password) }
-      f('#identity .logout').should be_present
+      expect(f('#identity .logout')).to be_present
     else
       fill_in_login_form(username, password)
     end
@@ -350,18 +486,24 @@ shared_examples_for "all selenium tests" do
     else
       PseudonymSession.any_instance.stubs(:session_credentials).returns([])
       PseudonymSession.any_instance.stubs(:record).returns { pseudonym.reload }
-      PseudonymSession.any_instance.stubs(:used_basic_auth?).returns(false)
       # PseudonymSession.stubs(:find).returns(@pseudonym_session)
     end
   end
 
-  def destroy_session(pseudonym, real_login)
+  def destroy_session(real_login)
     if real_login
-      driver.navigate.to(app_host + '/logout')
+      logout_link = f('#identity .logout a')
+      if logout_link
+        if logout_link.displayed?
+          expect_new_page_load(:accept_alert) { logout_link.click() }
+        else
+          get '/'
+          destroy_session(true)
+        end
+      end
     else
       PseudonymSession.any_instance.unstub :session_credentials
       PseudonymSession.any_instance.unstub :record
-      PseudonymSession.any_instance.unstub :used_basic_auth?
     end
   end
 
@@ -378,6 +520,11 @@ shared_examples_for "all selenium tests" do
   def course_with_student_logged_in(opts={})
     user_logged_in(opts)
     course_with_student({:user => @user, :active_course => true, :active_enrollment => true}.merge(opts))
+  end
+
+  def course_with_observer_logged_in(opts={})
+    user_logged_in(opts)
+    course_with_observer({:user => @user, :active_course => true, :active_enrollment => true}.merge(opts))
   end
 
   def course_with_ta_logged_in(opts={})
@@ -413,17 +560,23 @@ shared_examples_for "all selenium tests" do
     wait_for_ajaximations
   end
 
-  def expect_new_page_load
-    make_full_screen
+  def expect_new_page_load(accept_alert = false)
     driver.execute_script("INST.still_on_old_page = true;")
     yield
-    keep_trying_until { driver.execute_script("return INST.still_on_old_page;") == nil }
+    keep_trying_until do
+      begin
+        driver.execute_script("return INST.still_on_old_page;") == nil
+      rescue Selenium::WebDriver::Error::UnhandledAlertError
+        raise unless accept_alert
+        driver.switch_to.alert.accept
+      end
+    end
     wait_for_ajaximations
   end
 
   def check_domready
     dom_is_ready = driver.execute_script "return window.seleniumDOMIsReady"
-    requirejs_resources_loaded = driver.execute_script "return require.resourcesDone"
+    requirejs_resources_loaded = driver.execute_script "return !requirejs.s.contexts._.defQueue.length"
     dom_is_ready and requirejs_resources_loaded
   end
 
@@ -443,7 +596,7 @@ shared_examples_for "all selenium tests" do
     driver.execute_async_script(<<-JS)
      var callback = arguments[arguments.length - 1];
      var pollForJqueryAndRequire = function(){
-        if (window.jQuery && window.require && window.require.resourcesDone) {
+        if (window.jQuery && window.require && !window.requirejs.s.contexts._.defQueue.length) {
           jQuery(function(){
             setTimeout(callback, 1);
           });
@@ -550,7 +703,7 @@ shared_examples_for "all selenium tests" do
       begin
         val = yield
         break if val
-      rescue => e
+      rescue Exception => e
         raise if i == seconds - 1
       end
       sleep 1
@@ -567,9 +720,10 @@ shared_examples_for "all selenium tests" do
     driver.execute_script("return $(arguments[0], arguments[1] && $(arguments[1])).toArray();", selector, scope)
   end
 
-  #pass full selector ex. "#blah td tr" the attibute ex. "style" type and the value ex. "Red"
+  # pass full selector ex. "#blah td tr" , the attribute ex. "style" type,
+  # and the value ex. "Red"
   def fba(selector, attrib, value)
-    f("#{selector} [#{attrib}='#{value}']").click
+    f("#{selector} [#{attrib}='#{value}']")
   end
 
   # pass in an Element pointing to the textarea that is tinified.
@@ -643,7 +797,7 @@ shared_examples_for "all selenium tests" do
   end
 
   def hover_and_click(element_jquery_finder)
-    fj(element_jquery_finder.to_s).should be_present
+    expect(fj(element_jquery_finder.to_s)).to be_present
     driver.execute_script(%{$(#{element_jquery_finder.to_s.to_json}).trigger('mouseenter').click()})
   end
 
@@ -672,6 +826,10 @@ shared_examples_for "all selenium tests" do
     driver.execute_script(input['onchange']) if input['onchange']
   end
 
+  def get_options(selector, scope=nil)
+    Selenium::WebDriver::Support::Select.new(f(selector, scope)).options
+  end
+
   def click_option(select_css, option_text, select_by = :text)
     element = fj(select_css)
     select = Selenium::WebDriver::Support::Select.new(element)
@@ -681,7 +839,7 @@ shared_examples_for "all selenium tests" do
   def close_visible_dialog
     visible_dialog_element = fj('.ui-dialog:visible')
     visible_dialog_element.find_element(:css, '.ui-dialog-titlebar-close').click
-    visible_dialog_element.should_not be_displayed
+    expect(visible_dialog_element).not_to be_displayed
   end
 
   def element_exists(css_selector)
@@ -714,20 +872,20 @@ shared_examples_for "all selenium tests" do
 
   def stub_kaltura
     # trick kaltura into being activated
-    Kaltura::ClientV3.stubs(:config).returns({
-                                                 'domain' => 'www.instructuremedia.com',
-                                                 'resource_domain' => 'www.instructuremedia.com',
-                                                 'partner_id' => '100',
-                                                 'subpartner_id' => '10000',
-                                                 'secret_key' => 'fenwl1n23k4123lk4hl321jh4kl321j4kl32j14kl321',
-                                                 'user_secret_key' => '1234821hrj3k21hjk4j3kl21j4kl321j4kl3j21kl4j3k2l1',
-                                                 'player_ui_conf' => '1',
-                                                 'kcw_ui_conf' => '1',
-                                                 'upload_ui_conf' => '1'
-                                             })
-    kal = mock('Kaltura::ClientV3')
+    CanvasKaltura::ClientV3.stubs(:config).returns({
+                                                       'domain' => 'www.instructuremedia.com',
+                                                       'resource_domain' => 'www.instructuremedia.com',
+                                                       'partner_id' => '100',
+                                                       'subpartner_id' => '10000',
+                                                       'secret_key' => 'fenwl1n23k4123lk4hl321jh4kl321j4kl32j14kl321',
+                                                       'user_secret_key' => '1234821hrj3k21hjk4j3kl21j4kl321j4kl3j21kl4j3k2l1',
+                                                       'player_ui_conf' => '1',
+                                                       'kcw_ui_conf' => '1',
+                                                       'upload_ui_conf' => '1'
+                                                   })
+    kal = mock('CanvasKaltura::ClientV3')
     kal.stubs(:startSession).returns "new_session_id_here"
-    Kaltura::ClientV3.stubs(:new).returns(kal)
+    CanvasKaltura::ClientV3.stubs(:new).returns(kal)
   end
 
   def page_view(opts={})
@@ -764,18 +922,14 @@ shared_examples_for "all selenium tests" do
     link = polymorphic_path(link) if link.is_a? Array
     driver.get(app_host + link)
     #handles any modals prompted by navigating from the current page
-    try_to_close_modal
+    close_modal_if_present
     wait_for_ajaximations if waitforajaximations
   end
 
-  def try_to_close_modal
-    begin
-      driver.switch_to.alert.accept
-      driver.switch_to.alert.should be nil
-      true
-    rescue Exception => e
-      return false
-    end
+  def close_modal_if_present
+    driver.title # if an alert is present, this will trigger the error below
+  rescue Selenium::WebDriver::Error::UnhandledAlertError
+    driver.switch_to.alert.accept
   end
 
   def refresh_page
@@ -793,6 +947,18 @@ shared_examples_for "all selenium tests" do
     if w > 0 and h > 0
       driver.manage.window.move_to(0, 0)
       driver.manage.window.resize_to(w, h)
+    end
+  end
+
+  def resize_screen_to_normal
+    w, h = driver.execute_script <<-JS
+        if (window.screen) {
+          return [window.screen.availWidth, window.screen.availHeight];
+        }
+    JS
+    if w != 1200 || h != 600
+      driver.manage.window.move_to(0, 0)
+      driver.manage.window.resize_to(1200, 600)
     end
   end
 
@@ -838,30 +1004,35 @@ shared_examples_for "all selenium tests" do
 
   def check_image(element)
     require 'open-uri'
-    element.should be_displayed
-    element.tag_name.should == 'img'
+    expect(element).to be_displayed
+    expect(element.tag_name).to eq 'img'
     temp_file = open(element.attribute('src'))
-    temp_file.size.should > 0
+    expect(temp_file.size).to be > 0
   end
 
   def check_element_attrs(element, attrs)
-    element.should be_displayed
+    expect(element).to be_displayed
     attrs.each do |k, v|
       if v.is_a? Regexp
-        element.attribute(k).should match v
+        expect(element.attribute(k)).to match v
       else
-        element.attribute(k).should == v
+        expect(element.attribute(k)).to eq v
       end
     end
   end
 
   def check_file(element)
     require 'open-uri'
-    element.should be_displayed
-    element.tag_name.should == 'a'
+    expect(element).to be_displayed
+    expect(element.tag_name).to eq 'a'
     temp_file = open(element.attribute('href'))
-    temp_file.size.should > 0
+    expect(temp_file.size).to be > 0
     temp_file
+  end
+
+  def check_element_has_focus(element)
+    active_element = driver.execute_script('return document.activeElement')
+    expect(active_element).to eq(element)
   end
 
   def flash_message_present?(type=:warning, message_regex=nil)
@@ -891,8 +1062,8 @@ shared_examples_for "all selenium tests" do
       var $result = $(arguments[0]).data('associated_error_box');
       return $result ? $result.toArray() : []
     JS
-    box.length.should == 1
-    box[0].should be_displayed
+    expect(box.length).to eq 1
+    expect(box[0]).to be_displayed
   end
 
 ##
@@ -933,6 +1104,13 @@ shared_examples_for "all selenium tests" do
     drag_with_js source_selector, dx, dy
   end
 
+  ##
+  # drags the source element to the target element and waits for ajaximations
+  def drag_and_drop_element(source, target)
+    driver.action.drag_and_drop(source, target).perform
+    wait_for_ajaximations
+  end
+
 ##
 # returns true if a form validation error message is visible, false otherwise
   def error_displayed?
@@ -940,13 +1118,18 @@ shared_examples_for "all selenium tests" do
     driver.execute_script("return $('.error_text:visible').filter(function(){ return $(this).offset().left >= 0 }).length > 0")
   end
 
-  append_after(:each) do
-    begin
-      wait_for_ajax_requests
-    rescue Selenium::WebDriver::Error::WebDriverError
-      # we want to ignore selenium errors when attempting to wait here
+  unless EncryptedCookieStore.respond_to?(:test_secret)
+    EncryptedCookieStore.class_eval do
+      cattr_accessor :test_secret
+
+      def call_with_test_secret(env)
+        @secret = self.class.test_secret
+        @encryption_key = unhex(@secret)
+        call_without_test_secret(env)
+      end
+
+      alias_method_chain :call, :test_secret
     end
-    truncate_all_tables unless self.use_transactional_fixtures
   end
 
   append_before (:each) do
@@ -955,7 +1138,7 @@ shared_examples_for "all selenium tests" do
       tries ||= 3
       driver.manage.timeouts.implicit_wait = 3
       driver.manage.timeouts.script_timeout = 60
-      EncryptedCookieStore.any_instance.stubs(:secret).returns(SecureRandom.hex(64))
+      EncryptedCookieStore.test_secret = SecureRandom.hex(64)
       enable_forgery_protection
     rescue
       if ENV['PARALLEL_EXECS'] != nil
@@ -966,7 +1149,7 @@ shared_examples_for "all selenium tests" do
         default_url_options[:host] = $app_host_and_port
         retry unless (tries -= 1).zero?
       else
-        raise('spec run time crashed')
+        raise # preserve original error
       end
     end
   end
@@ -974,22 +1157,27 @@ shared_examples_for "all selenium tests" do
   append_before (:all) do
     $selenium_driver ||= setup_selenium
     default_url_options[:host] = $app_host_and_port
+    close_modal_if_present
+    resize_screen_to_normal
   end
 
-  append_before (:all) do
-    unless $check_screen_dimensions
-      w, h = driver.execute_script <<-JS
-        if (window.screen) {
-          return [window.screen.availWidth, window.screen.availHeight];
-        }
-      JS
-      raise("desktop dimensions (#{w}x#{h}) are too small to successfully run the selenium specs, minimum size of 1024x760 is required.") unless w >= 1024 && h >= 760
-      $check_screen_dimensions = true
-    end
+  prepend_before :all do
+    SeleniumTestsHelperMethods.allow_requests!
   end
 
-  append_after(:each) do
+  prepend_before :each do
+    SeleniumTestsHelperMethods.allow_requests!
+  end
+
+  after(:each) do
     clear_timers!
+    begin # while disallow_requests! would generally get these, there's a small window between the ajax request starting up and the middleware actually processing it
+      wait_for_ajax_requests
+    rescue Selenium::WebDriver::Error::WebDriverError
+      # we want to ignore selenium errors when attempting to wait here
+    end
+    SeleniumTestsHelperMethods.disallow_requests!
+    truncate_all_tables unless self.use_transactional_fixtures
   end
 
   def clear_timers!
@@ -1054,13 +1242,13 @@ def validate_breadcrumb_link(link_element, breadcrumb_text)
   expect_new_page_load { link_element.click }
   if breadcrumb_text != nil
     breadcrumb = f('#breadcrumbs')
-    breadcrumb.should include_text(breadcrumb_text)
+    expect(breadcrumb).to include_text(breadcrumb_text)
   end
-  driver.execute_script("return INST.errorCount;").should == 0
+  expect(driver.execute_script("return INST.errorCount;")).to eq 0
 end
 
 def skip_if_ie(additional_error_text)
-  pending("skipping test, fails in IE : " + additional_error_text) if driver.browser == :internet_explorer
+  skip("skipping test, fails in IE : " + additional_error_text) if driver.browser == :internet_explorer
 end
 
 def alert_present?
@@ -1074,7 +1262,7 @@ def alert_present?
 end
 
 def scroll_page_to_top
-  driver.execute_script("window.scrollTo(0, 0")
+  driver.execute_script("window.scrollTo(0, 0)")
 end
 
 def scroll_page_to_bottom
@@ -1090,7 +1278,7 @@ def find_css_in_string(string_of_html, css_selector)
 end
 
 shared_examples_for "in-process server selenium tests" do
-  it_should_behave_like "all selenium tests"
+  include_examples "all selenium tests"
   prepend_before (:all) do
     $in_proc_webserver_shutdown ||= SeleniumTestsHelperMethods.start_webserver(WEBSERVER)
   end
@@ -1107,16 +1295,18 @@ shared_examples_for "in-process server selenium tests" do
       @db_connection = ActiveRecord::Base.connection
       @dj_connection = Delayed::Backend::ActiveRecord::Job.connection
 
-      # synchronize the execute method for a modicum of thread safety
+      # synchronize db connection methods for a modicum of thread safety
+      methods_to_sync = %w{execute exec_cache exec_no_cache query}
       [@db_connection, @dj_connection].each do |conn|
-        if !conn.respond_to?(:execute_without_synchronization)
-          conn.class.class_eval do
-            def execute_with_synchronization(*args)
-              @mutex ||= Mutex.new
-              @mutex.synchronize { execute_without_synchronization(*args) }
-            end
-
-            alias_method_chain :execute, :synchronization
+        methods_to_sync.each do |method_name|
+          if conn.respond_to?(method_name, true) && !conn.respond_to?("#{method_name}_with_synchronization", true)
+            conn.class.class_eval <<-RUBY
+              def #{method_name}_with_synchronization(*args)
+                @mutex ||= Mutex.new
+                @mutex.synchronize { #{method_name}_without_synchronization(*args) }
+              end
+              alias_method_chain :#{method_name}, :synchronization
+            RUBY
           end
         end
       end

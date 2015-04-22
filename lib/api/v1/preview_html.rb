@@ -16,11 +16,13 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
+require 'sanitize'
+
 module Api::V1::PreviewHtml
   def render_preview_html
     html = params[:html]
     html = process_incoming_html_content(html)
-    html = Sanitize.clean(html, Instructure::SanitizeField::SANITIZE)
+    html = Sanitize.clean(html, CanvasSanitize::SANITIZE)
     html = api_user_content(html)
     render :json => {:html => html}
   end

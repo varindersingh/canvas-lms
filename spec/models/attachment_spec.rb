@@ -1,6 +1,6 @@
 # coding: utf-8
 #
-# Copyright (C) 2011 Instructure, Inc.
+# Copyright (C) 2011 - 2014 Instructure, Inc.
 #
 # This file is part of Canvas.
 #
@@ -20,586 +20,203 @@
 require File.expand_path(File.dirname(__FILE__) + '/../sharding_spec_helper.rb')
 
 describe Attachment do
-
   context "validation" do
     it "should create a new instance given valid attributes" do
       attachment_model
     end
 
     it "should require a context" do
-      lambda{attachment_model(:context => nil)}.should raise_error(ActiveRecord::RecordInvalid, /Validation failed: Context can't be blank/)
+      expect{attachment_model(:context => nil)}.to raise_error(ActiveRecord::RecordInvalid, /Context/)
     end
 
   end
 
   context "default_values" do
+    before :once do
+      @course = course_model
+    end
+
     it "should set the display name to the filename if it is nil" do
       attachment_model(:display_name => nil)
-      @attachment.display_name.should eql(@attachment.filename)
+      expect(@attachment.display_name).to eql(@attachment.filename)
     end
 
-    context "scribd_mime_type_id" do
-      it "should get set given extension" do
-        Attachment.clear_cached_mime_ids
-        scribd_mime_type_model(:extension => 'pdf')
-        @course = course_model
-
-        @attachment = @course.attachments.build(:filename => 'some_file.pdf')
-        @attachment.content_type = ''
-        @attachment.save!
-        @attachment.scribd_mime_type.should eql(@scribd_mime_type)
-      end
-
-      it "should get set given content_type" do
-        Attachment.clear_cached_mime_ids
-        scribd_mime_type_model(:name => 'application/pdf')
-        @course = course_model
-
-        @attachment = @course.attachments.build(:filename => 'some_file')
-        @attachment.content_type = 'application/pdf'
-        @attachment.save!
-        @attachment.scribd_mime_type.should eql(@scribd_mime_type)
-      end
-
-      it "should prefer using content_type over extension" do
-        Attachment.clear_cached_mime_ids
-        mime_type_pdf = scribd_mime_type_model(:name => 'application/pdf')
-        mime_type_doc = scribd_mime_type_model(:extension => 'doc')
-        @course = course_model
-
-        @attachment = @course.attachments.build(:filename => 'some_file.doc')
-        @attachment.content_type = 'application/pdf'
-        @attachment.save!
-        @attachment.scribd_mime_type.should eql(mime_type_pdf)
-      end
-
-      it "should not get set for html content despite extension" do
-        ['text/html', 'application/xhtml+xml', 'application/xml', 'text/xml'].each do |content_type|
-          # make sure mime type exists so we'd otherwise have a chance to set it
-          mime_type_doc = scribd_mime_type_model(:extension => 'doc')
-          mime_type_html = scribd_mime_type_model(:name => content_type)
-
-          @course = course_model
-          @attachment = @course.attachments.build(:filename => 'some_file.doc')
-          @attachment.content_type = content_type
-          @attachment.save!
-          @attachment.scribd_mime_type.should be_nil
-        end
-      end
-    end
-
-    it "should create a ScribdAccount if one isn't present" do
-      scribd_mime_type_model(:extension => 'pdf')
-      course_model
-      @course.scribd_account.should be_nil
-      attachment_obj_with_context(@course, :content_type => 'application/pdf')
-      @attachment.context.should eql(@course)
-      @attachment.context.scribd_account.should be_nil
-      expect {
-        @attachment.save!
-        @attachment.context.scribd_account.should_not be_nil
-        @attachment.context.scribd_account.should be_is_a(ScribdAccount)
-      }.to change(ScribdAccount, :count).by(1)
-    end
-
-    it "should set the attachment.scribd_account to the context scribd_account" do
-      scribdable_attachment_model
-      @attachment.scribd_account.should eql(@attachment.context.scribd_account)
-    end
-
-  end
-
-  it "should be scribdable if scribd_mime_type_id is set" do
-    scribdable_attachment_model
-    @attachment.should be_scribdable
   end
 
   context "authenticated_s3_url" do
-    before do
+    before :each do
       local_storage!
     end
 
-    it "should return http as the protocol by default" do
+    before :once do
       course_model
+    end
+
+    it "should return http as the protocol by default" do
       attachment_with_context(@course)
-      @attachment.authenticated_s3_url.should match(/^http:\/\//)
+      expect(@attachment.authenticated_s3_url).to match(/^http:\/\//)
     end
 
     it "should return the protocol if specified" do
-      course_model
       attachment_with_context(@course)
-      @attachment.authenticated_s3_url(:secure => true).should match(/^https:\/\//)
+      expect(@attachment.authenticated_s3_url(:secure => true)).to match(/^https:\/\//)
     end
   end
 
-  context "scribdable_context" do
-    it "should be a scribdable_context if the context is Course" do
-      course_model
-      attachment_with_context(@course)
-      @attachment.send(:scribdable_context?).should be_true
-    end
-
-    it "should be a scribdable_context if the context is Group" do
-      group_model
-      attachment_with_context(@group)
-      @attachment.send(:scribdable_context?).should be_true
-    end
-
-    it "should be a scribdable_context if the context is User" do
-      user_model
-      attachment_with_context(@user)
-      @attachment.context = @user
-      @attachment.context.should be_is_a(User)
-      @attachment.send(:scribdable_context?).should be_true
-    end
-
-    it "should not be a scribdable_context for non-scribdable contexts (like an Account, for example)" do
-      account_model
-      attachment_with_context(@account)
-      @attachment.context = @account
-      @attachment.context.should be_is_a(Account)
-      @attachment.send(:scribdable_context?).should be_false
-    end
-
+  def configure_crocodoc
+    PluginSetting.create! :name => 'crocodoc',
+                          :settings => { :api_key => "blahblahblahblahblah" }
+    Crocodoc::API.any_instance.stubs(:upload).returns 'uuid' => '1234567890'
   end
 
   context "crocodoc" do
-    before do
-      PluginSetting.create! :name => 'crocodoc',
-                            :settings => { :api_key => "blahblahblahblahblah" }
-      Crocodoc::API.any_instance.stubs(:upload).returns 'uuid' => '1234567890'
-    end
+    before { configure_crocodoc }
 
     it "crocodocable?" do
       crocodocable_attachment_model
-      @attachment.should be_crocodocable
-    end
-
-    it "should not submit to auto-submit to scribd if a crocodoc is present" do
-      expects_job_with_tag('Attachment#submit_to_scribd!', 0) do
-        attachment_model(:content_type => 'application/pdf', :submission_attachment => true)
-        @attachment.after_attachment_saved
-      end
-
-      expects_job_with_tag('Attachment#submit_to_scribd!') do
-        scribd_mime_type_model(:extension => 'odt', :name => 'openoffice')
-        attachment_model(:content_type => 'openoffice')
-        @attachment.crocodocable?.should_not be_true
-        @attachment.after_attachment_saved
-      end
+      expect(@attachment).to be_crocodocable
     end
 
     it "should submit to crocodoc" do
       crocodocable_attachment_model
-      @attachment.crocodoc_available?.should be_false
+      expect(@attachment.crocodoc_available?).to be_falsey
       @attachment.submit_to_crocodoc
 
-      @attachment.crocodoc_available?.should be_true
-      @attachment.crocodoc_document.uuid.should == '1234567890'
+      expect(@attachment.crocodoc_available?).to be_truthy
+      expect(@attachment.crocodoc_document.uuid).to eq '1234567890'
     end
 
-    it "should spawn a delayed job to retry failed uploads (once)" do
+    it "should spawn delayed jobs to retry failed uploads" do
       Crocodoc::API.any_instance.stubs(:upload).returns 'error' => 'blah'
       crocodocable_attachment_model
 
-      expects_job_with_tag('Attachment#submit_to_crocodoc', 1) do
+      attempts = 3
+      Setting.set('max_crocodoc_attempts', attempts)
+
+      track_jobs do
+        # first attempt
         @attachment.submit_to_crocodoc
+
+        time = Time.now
+        # nth attempt won't create more jobs
+        attempts.times {
+          time += 1.hour
+          Timecop.freeze(time) do
+            run_jobs
+          end
+        }
       end
 
-      expects_job_with_tag('Attachment#submit_to_crocodoc', 0) do
-        @attachment.submit_to_crocodoc(2)
-      end
+      expect(created_jobs.size).to eq attempts
     end
 
-    it "should submit to scribd if crocodoc fails to convert" do
+    it "should submit to canvadocs if crocodoc fails to convert" do
       crocodocable_attachment_model
       @attachment.submit_to_crocodoc
 
       Crocodoc::API.any_instance.stubs(:status).returns [
         {'uuid' => '1234567890', 'status' => 'ERROR'}
       ]
+      Canvadocs.stubs(:enabled?).returns true
 
-      expects_job_with_tag('Attachment.submit_to_scribd') {
+      expects_job_with_tag('Attachment.submit_to_canvadocs') {
         CrocodocDocument.update_process_states
       }
     end
   end
 
+  context "canvadocs" do
+    before :once do
+      PluginSetting.create! :name => 'canvadocs',
+        :settings => {"api_key" => "blahblahblahblahblah",
+                      "base_url" => "http://example.com"}
+    end
+
+    before :each do
+      Canvadocs::API.any_instance.stubs(:upload).returns "id" => 1234
+    end
+
+    describe "submit_to_canvadocs" do
+      it "submits canvadocable documents" do
+        a = canvadocable_attachment_model
+        a.submit_to_canvadocs
+        expect(a.canvadoc.document_id).not_to be_nil
+      end
+
+      it "works from the bulk uploader" do
+        a1 = canvadocable_attachment_model
+        Attachment.submit_to_canvadocs([a1.id])
+        expect(a1.canvadoc.document_id).not_to be_nil
+      end
+
+      it "doesn't submit non-canvadocable documents" do
+        a = attachment_model
+        a.submit_to_canvadocs
+        expect(a.canvadoc).to be_nil
+      end
+
+      it "tries again later when upload fails" do
+        Canvadocs::API.any_instance.stubs(:upload).returns(nil)
+        expects_job_with_tag('Attachment#submit_to_canvadocs') {
+          canvadocable_attachment_model.submit_to_canvadocs
+        }
+      end
+
+      it "prefers crocodoc when annotation is requested" do
+        configure_crocodoc
+        Setting.set('canvadoc_mime_types',
+                    (Canvadoc.mime_types << "application/blah").to_json)
+
+        crocodocable = crocodocable_attachment_model
+        canvadocable = canvadocable_attachment_model content_type: "application/blah"
+
+        crocodocable.submit_to_canvadocs 1, wants_annotation: true
+        run_jobs
+        expect(crocodocable.canvadoc).to be_nil
+        expect(crocodocable.crocodoc_document).not_to be_nil
+
+        canvadocable.submit_to_canvadocs 1, wants_annotation: true
+        expect(canvadocable.canvadoc).not_to be_nil
+        expect(canvadocable.crocodoc_document).to be_nil
+      end
+    end
+  end
+
   it "should set the uuid" do
     attachment_model
-    @attachment.uuid.should_not be_nil
+    expect(@attachment.uuid).not_to be_nil
   end
 
   context "workflow" do
-    before do
+    before :once do
       attachment_model
     end
 
     it "should default to pending_upload" do
-      @attachment.state.should eql(:pending_upload)
-    end
-
-    it "should be able to upload and record the submitted_to_scribd_at" do
-      time = Time.now
-      @attachment.upload!
-      @attachment.submitted_to_scribd_at.to_i.should be_close(time.to_i, 2)
-      @attachment.state.should eql(:processing)
+      expect(@attachment.state).to eql(:pending_upload)
     end
 
     it "should be able to take a processing object and complete its process" do
       attachment_model(:workflow_state => 'processing')
       @attachment.process!
-      @attachment.state.should eql(:processed)
+      expect(@attachment.state).to eql(:processed)
     end
 
     it "should be able to take a new object and bypass upload with process" do
       @attachment.process!
-      @attachment.state.should eql(:processed)
+      expect(@attachment.state).to eql(:processed)
     end
 
     it "should be able to recycle a processed object and re-upload it" do
       attachment_model(:workflow_state => 'processed')
       @attachment.recycle
-      @attachment.state.should eql(:pending_upload)
-    end
-  end
-
-  context "submit_to_scribd!" do
-    before do
-      ScribdAPI.stubs(:set_user).returns(true)
-      ScribdAPI.stubs(:upload).returns(UUIDSingleton.instance.generate)
-    end
-
-    describe "submit_to_scribd job" do
-      it "should queue for scribdable types" do
-        expects_job_with_tag('Attachment#submit_to_scribd!') do
-          scribdable_attachment_model
-          @attachment.after_attachment_saved
-        end
-        @attachment.should be_pending_upload
-      end
-
-      it "should not queue for non-scribdable types" do
-        expects_job_with_tag('Attachment#submit_to_scribd!', 0) do
-          attachment_model
-          @attachment.after_attachment_saved
-        end
-        @attachment.should be_processed
-      end
-
-      describe "scribd submit filtering" do
-        it "should still submit if the attachment is tagged" do
-          Attachment.stubs(:filtering_scribd_submits?).returns(true)
-          expects_job_with_tag('Attachment#submit_to_scribd!') do
-            scribd_mime_type_model(:extension => 'pdf')
-            attachment_model(:content_type => 'application/pdf', :submission_attachment => true)
-            @attachment.after_attachment_saved
-          end
-          @attachment.should be_pending_upload
-        end
-
-        it "should skip submit if the attachment isn't tagged" do
-          Attachment.stubs(:filtering_scribd_submits?).returns(true)
-          expects_job_with_tag('Attachment#submit_to_scribd!', 0) do
-            scribdable_attachment_model
-            @attachment.after_attachment_saved
-          end
-          @attachment.should be_processed
-        end
-      end
-    end
-
-    it "should upload scribdable attachments" do
-      scribdable_attachment_model
-      @doc_obj = Scribd::Document.new
-      ScribdAPI.expects(:upload).returns(@doc_obj)
-      @doc_obj.stubs(:thumbnail).returns("the url to the scribd doc thumbnail")
-      @attachment.submit_to_scribd!.should be_true
-      @attachment.scribd_doc.should eql(@doc_obj)
-      @attachment.state.should eql(:processing)
-    end
-
-    it "should bypass non-scridbable attachments" do
-      attachment_model
-      @attachment.should_not be_scribdable
-      ScribdAPI.expects(:set_user).never
-      ScribdAPI.expects(:upload).never
-      @attachment.submit_to_scribd!.should be_true
-      @attachment.state.should eql(:processed)
-    end
-
-    it "should not mess with attachments outside the pending_upload state" do
-      ScribdAPI.expects(:set_user).never
-      ScribdAPI.expects(:upload).never
-      attachment_model(:workflow_state => 'processing')
-      @attachment.submit_to_scribd!.should be_false
-      attachment_model(:workflow_state => 'processed')
-      @attachment.submit_to_scribd!.should be_false
-    end
-
-    it "should use the root attachment scribd doc" do
-      Scribd::Document.any_instance.stubs(:destroy).returns(true)
-      a1 = attachment_model(:workflow_state => 'processing')
-      a2 = attachment_model(:workflow_state => 'processing', :root_attachment => a1)
-      a2.root_attachment.should == a1
-      a1.scribd_doc = doc = Scribd::Document.new
-      a2.scribd_doc.should == doc
-      a2.destroy
-      a1.scribd_doc.should == doc
-    end
-
-    it "should not send the secret password via to_json" do
-      attachment_model
-      @attachment.scribd_doc = Scribd::Document.new
-      @attachment.scribd_doc.doc_id = 'asdf'
-      @attachment.scribd_doc.secret_password = 'password'
-      res = JSON.parse(@attachment.to_json)
-      res['attachment'].should_not be_nil
-      res['attachment']['scribd_doc'].should_not be_nil
-      res['attachment']['scribd_doc']['attributes'].should_not be_nil
-      res['attachment']['scribd_doc']['attributes']['doc_id'].should eql('asdf')
-      res['attachment']['scribd_doc']['attributes']['secret_password'].should eql('')
-      @attachment.scribd_doc.doc_id.should eql('asdf')
-      @attachment.scribd_doc.secret_password.should eql('password')
-    end
-  end
-
-  context "scribd cleanup" do
-    before do
-      ScribdAPI.stubs(:enabled?).returns(true)
-    end
-
-    after do
-      ScribdAPI.unstub(:enabled?)
-    end
-
-    def fake_scribd_doc(doc_id = String.random(8))
-      scribd_doc = Scribd::Document.new
-      scribd_doc.doc_id = doc_id
-      scribd_doc.secret_password = 'asdf'
-      scribd_doc.access_key = 'jkl;'
-      scribd_doc
-    end
-
-    def attachment_with_scribd_doc(doc = fake_scribd_doc, opts = {})
-      att = attachment_model(opts)
-      att.scribd_doc = doc
-      att.save!
-      att
-    end
-
-    describe "related_attachments" do
-      it "should include the root attachment" do
-        @root = attachment_model
-        @child = attachment_model :root_attachment => @root
-        @child.related_attachments.map(&:id).should == [@root.id]
-      end
-
-      it "should include child attachments" do
-        @root = attachment_model
-        @child = attachment_model :root_attachment => @root
-        @root.related_attachments.map(&:id).should == [@child.id]
-      end
-
-      it "should include sibling attachments" do
-        @root = attachment_model
-        @child1 = attachment_model :root_attachment => @root
-        @child2 = attachment_model :root_attachment => @root
-        @child1.related_attachments.map(&:id).sort.should == [@root.id, @child2.id].sort
-      end
-    end
-
-    describe "scribd_doc_shared?" do
-      it "should be trivially false if there is no scribd_doc" do
-        attachment_model
-        @attachment.should_not be_scribd_doc_shared
-      end
-
-      it "should be false if there are no related attachments" do
-        attachment_with_scribd_doc.should_not be_scribd_doc_shared
-      end
-
-      it "should be false if related attachments have no scribd_docs" do
-        @root = attachment_model
-        @child1 = attachment_with_scribd_doc(fake_scribd_doc, :root_attachment => @root)
-        @child2 = attachment_with_scribd_doc(nil, :root_attachment => @root)
-        @child1.should_not be_scribd_doc_shared
-      end
-
-      it "should be false if related attachments have different scribd_docs" do
-        @root = attachment_with_scribd_doc(fake_scribd_doc('zero'))
-        @child1 = attachment_with_scribd_doc(fake_scribd_doc('one'), :root_attachment => @root)
-        @child2 = attachment_with_scribd_doc(fake_scribd_doc('two'), :root_attachment => @root)
-        @root.should_not be_scribd_doc_shared
-        @child1.should_not be_scribd_doc_shared
-      end
-
-      it "should be true if related attachment implicitly uses our doc_id" do
-        @root = attachment_with_scribd_doc(fake_scribd_doc('zero'))
-        @child1 = attachment_with_scribd_doc(nil, :root_attachment => @root)
-        @child2 = attachment_with_scribd_doc(nil, :root_attachment => @root)
-        @root.should be_scribd_doc_shared
-        @child1.should be_scribd_doc_shared
-      end
-
-      it "should be true if related attachment explicitly uses our doc_id" do
-        @root = attachment_model
-        @child1 = attachment_with_scribd_doc(fake_scribd_doc('what'), :root_attachment => @root)
-        @child2 = attachment_with_scribd_doc(fake_scribd_doc('what'), :root_attachment => @root)
-        @child1.should be_scribd_doc_shared
-      end
-    end
-
-    describe "delete_scribd_doc" do
-      it "should skip deletion if the scribd_doc is shared" do
-        @root = attachment_with_scribd_doc(fake_scribd_doc('zero'))
-        @child = attachment_with_scribd_doc(fake_scribd_doc('zero'), :root_attachment => @root)
-        @child.scribd_doc.expects(:destroy).never
-        @child.destroy
-        @child.reload.workflow_state.should eql 'deleted'
-        @child.read_attribute(:scribd_doc).should be_nil
-      end
-
-      it "should delete the scribd doc" do
-        @root = attachment_with_scribd_doc(fake_scribd_doc('zero'))
-        @child = attachment_with_scribd_doc(fake_scribd_doc('one'), :root_attachment => @root)
-        @child.scribd_doc.expects(:destroy).once.returns(true)
-        @child.destroy
-        @child.reload.workflow_state.should eql 'deleted'
-        @child.read_attribute(:scribd_doc).should be_nil
-      end
-    end
-
-    describe "check_rerender_scribd_doc" do
-      before do
-        scribd_mime_type_model(:extension => 'docx')
-      end
-
-      it "should resubmit a deleted scribd doc" do
-        @attachment = attachment_with_scribd_doc(fake_scribd_doc, :filename => 'file.docx', :scribd_attempts => 3)
-        @attachment.scribd_doc.expects(:destroy).once.returns(true)
-        @attachment.delete_scribd_doc
-        expect {
-          @attachment.check_rerender_scribd_doc
-        }.to change(Delayed::Job, :count).by(1)
-        Delayed::Job.find_by_tag('Attachment#submit_to_scribd!').should_not be_nil
-        @attachment.should be_pending_upload
-        @attachment.scribd_attempts.should == 0
-      end
-
-      it "should not queue up duplicate render requests for the same document" do
-        @attachment = attachment_model(:filename => 'file.docx', :workflow_state => 'deleted')
-        expect { @attachment.check_rerender_scribd_doc }.to change(Delayed::Job, :count).by(1)
-        expect { @attachment.check_rerender_scribd_doc }.to change(Delayed::Job, :count).by(0)
-      end
-
-      it "should do nothing if a scribd_doc already exists" do
-        @attachment = attachment_with_scribd_doc(fake_scribd_doc, :filename => 'file.docx')
-        expect {
-          @attachment.check_rerender_scribd_doc
-        }.to change(Delayed::Job, :count).by(0)
-      end
-
-      it "should be invoked on record_inline_view" do
-        @attachment = attachment_model(:filename => 'file.docx', :workflow_state => 'deleted')
-        expect {
-          @attachment.record_inline_view
-        }.to change(Delayed::Job, :count).by(1)
-      end
-
-      it "should do nothing on non-scribdable types" do
-        @attachment = attachment_model(:filename => 'file.lolcats')
-        expect {
-          @attachment.check_rerender_scribd_doc
-        }.to change(Delayed::Job, :count).by(0)
-      end
-    end
-
-    describe "scribd_render_url" do
-      before do
-        scribd_mime_type_model(:extension => 'docx')
-      end
-
-      it "should return a url to request scribd rerendering" do
-        @attachment = attachment_model(:filename => 'file.docx', :workflow_state => 'deleted')
-        @attachment.scribd_render_url.should == "/#{@attachment.context_url_prefix}/files/#{@attachment.id}/scribd_render"
-      end
-
-      it "should return nil if the scribd doc isn't missing" do
-        @attachment = attachment_with_scribd_doc
-        @attachment.scribd_render_url.should be_nil
-      end
-    end
-  end
-
-  context "conversion_status" do
-    before(:each) do
-      ScribdAPI.stubs(:get_status).returns(:status_from_scribd)
-      ScribdAPI.stubs(:set_user).returns(true)
-      ScribdAPI.stubs(:upload).returns(Scribd::Document.new)
-      ScribdAPI.stubs(:enabled?).returns(true)
-    end
-
-    it "should have a default conversion_status of :not_submitted for attachments that haven't been submitted" do
-      attachment_model
-      @attachment.conversion_status.should eql('NOT SUBMITTED')
-    end
-
-    it "should ask Scribd for the status" do
-      ScribdAPI.expects(:get_status).returns(:status_from_scribd)
-      scribdable_attachment_model
-      @doc_obj = Scribd::Document.new
-      ScribdAPI.expects(:upload).returns(@doc_obj)
-      @doc_obj.stubs(:thumbnail).returns("the url to the scribd doc thumbnail")
-      @attachment.submit_to_scribd!
-      @attachment.query_conversion_status!
-    end
-
-    it "should not ask Scribd for the status" do
-      ScribdAPI.expects(:get_status).never
-      scribdable_attachment_model
-      @doc_obj = Scribd::Document.new
-      ScribdAPI.expects(:upload).returns(@doc_obj)
-      @doc_obj.stubs(:thumbnail).returns("the url to the scribd doc thumbnail")
-      @attachment.submit_to_scribd!
-      @attachment.conversion_status.should == "PROCESSING"
-    end
-
-  end
-
-  context "download_url" do
-    before do
-      ScribdAPI.stubs(:set_user).returns(true)
-      @doc = mock('Scribd Document', :download_url => 'some url')
-      Scribd::Document.stubs(:find).returns(@doc)
+      expect(@attachment.state).to eql(:pending_upload)
     end
   end
 
   context "named scopes" do
-    it "should have a scope for all scribdable attachments, regardless their state" do
-      (1..3).each { attachment_model }
-      (1..3).each { scribdable_attachment_model }
-      Attachment.scribdable?.size.should eql(3)
-      Attachment.all.size.should eql(6)
-      Attachment.scribdable?.each {|m| m.should be_scribdable}
-    end
-
-    it "should have a scope for uploadable models, all models that are in the pending_upload state" do
-      attachment_model
-      attachments = [@attachment]
-      @attachment.submit_to_scribd!
-      attachment_model
-      attachments << @attachment
-      scribdable_attachment_model
-      attachments << @attachment
-      Attachment.all.size.should eql(3)
-      Attachment.uploadable.size.should eql(2)
-      Attachment.uploadable.should be_include(Attachment.find(attachments[1].id))
-      Attachment.uploadable.should be_include(Attachment.find(attachments[2].id))
-    end
-
     context "by_content_types" do
-      before do
+      before :once do
         course_model
         @gif = attachment_model :context => @course, :content_type => 'image/gif'
         @jpg = attachment_model :context => @course, :content_type => 'image/jpeg'
@@ -607,18 +224,18 @@ describe Attachment do
       end
 
       it "should match type" do
-        @course.attachments.by_content_types(['image']).pluck(:id).sort.should == [@gif.id, @jpg.id].sort
+        expect(@course.attachments.by_content_types(['image']).pluck(:id).sort).to eq [@gif.id, @jpg.id].sort
       end
 
       it "should match type/subtype" do
-        @course.attachments.by_content_types(['image/gif']).pluck(:id).should == [@gif.id]
-        @course.attachments.by_content_types(['image/gif', 'image/jpeg']).pluck(:id).sort.should == [@gif.id, @jpg.id].sort
+        expect(@course.attachments.by_content_types(['image/gif']).pluck(:id)).to eq [@gif.id]
+        expect(@course.attachments.by_content_types(['image/gif', 'image/jpeg']).pluck(:id).sort).to eq [@gif.id, @jpg.id].sort
       end
 
       it "should escape sql and wildcards" do
-        @course.attachments.by_content_types(['%']).pluck(:id).should == [@weird.id]
-        @course.attachments.by_content_types(["%/what's this"]).pluck(:id).should == [@weird.id]
-        @course.attachments.by_content_types(["%/%"]).pluck(:id).should == []
+        expect(@course.attachments.by_content_types(['%']).pluck(:id)).to eq [@weird.id]
+        expect(@course.attachments.by_content_types(["%/what's this"]).pluck(:id)).to eq [@weird.id]
+        expect(@course.attachments.by_content_types(["%/%"]).pluck(:id)).to eq []
       end
     end
   end
@@ -626,7 +243,7 @@ describe Attachment do
   context "uploaded_data" do
     it "should create with uploaded_data" do
       a = attachment_model(:uploaded_data => default_uploaded_data)
-      a.filename.should eql("doc.doc")
+      expect(a.filename).to eql("doc.doc")
     end
 
     context "uploading and db transactions" do
@@ -640,13 +257,14 @@ describe Attachment do
         truncate_table(Attachment)
         truncate_table(Folder)
         truncate_table(Group)
+        truncate_table(Delayed::Job)
       end
 
       it "should delay upload until the #save transaction is committed" do
         @attachment.uploaded_data = default_uploaded_data
         @attachment.connection.expects(:after_transaction_commit).once
         @attachment.expects(:touch_context_if_appropriate).never
-        @attachment.expects(:build_media_object).never
+        @attachment.expects(:ensure_media_object).never
         @attachment.save
       end
 
@@ -655,28 +273,28 @@ describe Attachment do
           @attachment.uploaded_data = default_uploaded_data
           Attachment.connection.expects(:after_transaction_commit).never
           @attachment.expects(:touch_context_if_appropriate)
-          @attachment.expects(:build_media_object)
+          @attachment.expects(:ensure_media_object)
           @attachment.save
         end
       end
     end
   end
 
-  context "build_media_object" do
-    before :each do
+  context "ensure_media_object" do
+    before :once do
       @course = course
       @attachment = @course.attachments.build(:filename => 'foo.mp4')
       @attachment.content_type = 'video'
-      @attachment.stubs(:downloadable?).returns(true)
     end
 
     it "should be called automatically upon creation" do
-      @attachment.expects(:build_media_object).once
+      @attachment.expects(:ensure_media_object).once
       @attachment.save!
     end
 
     it "should create a media object for videos" do
-      MediaObject.expects(:send_later_enqueue_args).once
+      @attachment.update_attribute(:media_entry_id, 'maybe')
+      @attachment.expects(:build_media_object).once.returns(true)
       @attachment.save!
     end
 
@@ -689,15 +307,15 @@ describe Attachment do
         @attachment.save!
       end
 
-      MediaObject.count.should == 0
+      expect(MediaObject.count).to eq 0
       job = created_jobs.first
-      job.tag.should == 'MediaObject.add_media_files'
-      job.run_at.to_i.should == (now + 25.seconds).to_i
+      expect(job.tag).to eq 'MediaObject.add_media_files'
+      expect(job.run_at.to_i).to eq (now + 25.seconds).to_i
     end
 
     it "should not create a media object in a skip_media_object_creation block" do
       Attachment.skip_media_object_creation do
-        MediaObject.expects(:send_later_enqueue_args).times(0)
+        @attachment.expects(:build_media_object).times(0)
         @attachment.save!
       end
     end
@@ -705,75 +323,85 @@ describe Attachment do
     it "should not create a media object for images" do
       @attachment.filename = 'foo.png'
       @attachment.content_type = 'image/png'
-      @attachment.expects(:build_media_object).once
-      MediaObject.expects(:send_later_enqueue_args).times(0)
+      @attachment.expects(:ensure_media_object).once
+      @attachment.expects(:build_media_object).times(0)
       @attachment.save!
     end
 
     it "should create a media object *after* a direct-to-s3 upload" do
-      MediaObject.expects(:send_later_enqueue_args).never
+      @attachment.expects(:build_media_object).never
       @attachment.workflow_state = 'unattached'
       @attachment.file_state = 'deleted'
       @attachment.save!
-      MediaObject.expects(:send_later_enqueue_args).once
+      @attachment.expects(:build_media_object).once
       @attachment.workflow_state = nil
       @attachment.file_state = 'available'
       @attachment.save!
     end
-    
+
     it "should disassociate but not delete the associated media object" do
       @attachment.media_entry_id = '0_feedbeef'
       @attachment.save!
-      
+
       media_object = @course.media_objects.build :media_id => '0_feedbeef'
       media_object.attachment_id = @attachment.id
       media_object.save!
-      
+
       @attachment.destroy
-      
+
       media_object.reload
-      media_object.should_not be_deleted
-      media_object.attachment_id.should be_nil
+      expect(media_object).not_to be_deleted
+      expect(media_object.attachment_id).to be_nil
     end
   end
 
   context "destroy" do
     it "should not actually destroy" do
       a = attachment_model(:uploaded_data => default_uploaded_data)
-      a.filename.should eql("doc.doc")
+      expect(a.filename).to eql("doc.doc")
       a.destroy
-      a.should_not be_frozen
-      a.should be_deleted
+      expect(a).not_to be_frozen
+      expect(a).to be_deleted
     end
 
     it "should not probably be possible to actually destroy... somehow" do
       a = attachment_model(:uploaded_data => default_uploaded_data)
-      a.filename.should eql("doc.doc")
+      expect(a.filename).to eql("doc.doc")
       a.destroy
-      a.should_not be_frozen
-      a.should be_deleted
+      expect(a).not_to be_frozen
+      expect(a).to be_deleted
       a.destroy!
-      a.should be_frozen
+      expect(a).to be_frozen
     end
 
     it "should not show up in the context list after being destroyed" do
       @course = course
-      @course.should_not be_nil
+      expect(@course).not_to be_nil
       a = attachment_model(:uploaded_data => default_uploaded_data, :context => @course)
-      a.filename.should eql("doc.doc")
-      a.context.should eql(@course)
+      expect(a.filename).to eql("doc.doc")
+      expect(a.context).to eql(@course)
       a.destroy
-      a.should_not be_frozen
-      a.should be_deleted
-      @course.attachments.should be_include(a)
-      @course.attachments.active.should_not be_include(a)
+      expect(a).not_to be_frozen
+      expect(a).to be_deleted
+      expect(@course.attachments).to be_include(a)
+      expect(@course.attachments.active).not_to be_include(a)
     end
 
     it "should still destroy without error if file data is lost" do
       a = attachment_model(:uploaded_data => default_uploaded_data)
       a.stubs(:downloadable?).returns(false)
       a.destroy
-      a.should be_deleted
+      expect(a).to be_deleted
+    end
+  end
+
+  context "restore" do
+    it "should restore to 'available' state" do
+      a = attachment_model(:uploaded_data => default_uploaded_data)
+      a.destroy
+      expect(a).to be_deleted
+      a.restore
+      expect(a).to be_available
     end
   end
 
@@ -788,34 +416,48 @@ describe Attachment do
   end
 
   context "inferred display name" do
-    it "should take a normal filename and use it as a diplay name" do
-      a = attachment_model(:filename => 'normal_name.ppt')
-      a.display_name.should eql('normal_name.ppt')
+    before do
+      s3_storage!  # because we don't 'sanitize' filenames with the local backend
     end
 
-    it "should take a normal filename with spaces and convert the underscores to spaces" do
+    it "should take a normal filename and use it as a diplay name" do
       a = attachment_model(:filename => 'normal_name.ppt')
-      a.display_name.should eql('normal_name.ppt')
+      expect(a.display_name).to eql('normal_name.ppt')
+      expect(a.filename).to eql('normal_name.ppt')
     end
 
     it "should preserve case" do
       a = attachment_model(:filename => 'Normal_naMe.ppt')
-      a.display_name.should eql('Normal_naMe.ppt')
+      expect(a.display_name).to eql('Normal_naMe.ppt')
+      expect(a.filename).to eql('Normal_naMe.ppt')
     end
 
-    it "should split long names with dashes" do
-      a = attachment_model(:filename => 'this is a long name, over 30 characters long.ppt')
-      a.display_name.should eql('this is a long name, over 30 characters long.ppt')
+    it "should truncate filenames to 255 characters (preserving extension)" do
+      a = attachment_model(:filename => 'My new study guide or case study on this evolution on monkeys even in that land of costa rica somewhere my own point of  view going along with the field experiment I would say or try out is to put them not in wet areas like costa rico but try and put it so its not so long.docx')
+      expect(a.display_name).to eql("My new study guide or case study on this evolution on monkeys even in that land of costa rica somewhere my own point of  view going along with the field experiment I would say or try out is to put them not in wet areas like costa rico but try and put.docx")
+      expect(a.filename).to eql("My+new+study+guide+or+case+study+on+this+evolution+on+monkeys+even+in+that+land+of+costa+rica+somewhere+my+own+point+of++view+going+along+with+the+field+experiment+I+would+say+or+try+out+is+to+put+them+not+in+wet+areas+like+costa+rico+but+try+and+put.docx")
     end
 
-    it "shouldn't try to break up very large words" do
-      a = attachment_model(:filename => 'A long Bulgarian word is neprotifconstitutiondeistveiteneprotifconstitutiondeistveite')
-      a.display_name.should eql('A long Bulgarian word is neprotifconstitutiondeistveiteneprotifconstitutiondeistveite')
+    it "should use no more than half of the 255 characters for the extension" do
+      a = attachment_model(:filename => ("A" * 150) + "." + ("B" * 150))
+      expect(a.display_name).to eql(("A" * 127) + "." + ("B" * 127))
+      expect(a.filename).to eql(("A" * 127) + "." + ("B" * 127))
     end
 
-    it "should truncate filenames that are just too freaking big" do
-      fn = Attachment.new.sanitize_filename('My new study guide or case study on this evolution on monkeys even in that land of costa rica somewhere my own point of  view going along with the field experiment I would say or try out is to put them not in wet areas like costa rico but try and put it so its not so long.docx')
-      fn.should eql("My+new+study+guide+or+case+study+on+this+evolution+on+monkeys+even+in+that+land+of+costa+rica+somewhere+my+own.docx")
+    it "should not split unicode characters when truncating" do
+      a = attachment_model(:filename => "\u2603" * 300)
+      expect(a.display_name).to eql("\u2603" * 255)
+      expect(a.filename.length).to eql(252)
+      expect(a.unencoded_filename).to be_valid_encoding
+      expect(a.unencoded_filename).to eql("\u2603" * 28)
+    end
+
+    it "should not double-escape a root attachment's filename" do
+      a = attachment_model(:filename => 'something with spaces.txt')
+      expect(a.filename).to eq 'something+with+spaces.txt'
+      a2 = Attachment.new
+      a2.root_attachment = a
+      expect(a2.sanitize_filename(nil)).to eq a.filename
     end
   end
 
@@ -824,58 +466,58 @@ describe Attachment do
       a = attachment_model(:filename => "blech.ppt")
       course
       new_a = a.clone_for(@course)
-      new_a.context.should_not eql(a.context)
-      new_a.filename.should eql(a.filename)
-      new_a.root_attachment_id.should eql(a.id)
+      expect(new_a.context).not_to eql(a.context)
+      expect(new_a.filename).to eql(a.filename)
+      expect(new_a.root_attachment_id).to eql(a.id)
     end
 
     it "should link the thumbnail" do
       a = attachment_model(:uploaded_data => stub_png_data, :content_type => 'image/png')
-      a.thumbnail.should_not be_nil
+      expect(a.thumbnail).not_to be_nil
       course
       new_a = a.clone_for(@course)
-      new_a.thumbnail.should_not be_nil
-      new_a.thumbnail_url.should_not be_nil
-      new_a.thumbnail_url.should == a.thumbnail_url
+      expect(new_a.thumbnail).not_to be_nil
+      expect(new_a.thumbnail_url).not_to be_nil
+      expect(new_a.thumbnail_url).to eq a.thumbnail_url
     end
 
     it "should not create root_attachment_id cycles or self-references" do
       a = attachment_model(:uploaded_data => stub_png_data, :content_type => 'image/png')
-      a.root_attachment_id.should be_nil
+      expect(a.root_attachment_id).to be_nil
       coursea = @course
       @context = courseb = course
       b = a.clone_for(courseb, nil, :overwrite => true)
       b.save
-      b.context.should == courseb
-      b.root_attachment.should == a
+      expect(b.context).to eq courseb
+      expect(b.root_attachment).to eq a
 
       new_a = b.clone_for(coursea, nil, :overwrite => true)
-      new_a.should == a
-      new_a.root_attachment_id.should be_nil
+      expect(new_a).to eq a
+      expect(new_a.root_attachment_id).to be_nil
 
       new_b = new_a.clone_for(courseb, nil, :overwrite => true)
-      new_b.root_attachment_id.should == a.id
+      expect(new_b.root_attachment_id).to eq a.id
 
       new_b = b.clone_for(courseb, nil, :overwrite => true)
-      new_b.root_attachment_id.should == a.id
+      expect(new_b.root_attachment_id).to eq a.id
 
       @context = coursec = course
       c = b.clone_for(coursec, nil, :overwrite => true)
-      c.root_attachment.should == a
+      expect(c.root_attachment).to eq a
 
       new_a = c.clone_for(coursea, nil, :overwrite => true)
-      new_a.should == a
-      new_a.root_attachment_id.should be_nil
+      expect(new_a).to eq a
+      expect(new_a.root_attachment_id).to be_nil
 
       # pretend b's content changed so it got disconnected
       b.update_attribute(:root_attachment_id, nil)
       new_b = b.clone_for(courseb, nil, :overwrite => true)
-      new_b.root_attachment_id.should be_nil
+      expect(new_b.root_attachment_id).to be_nil
     end
 
     it "should maintain namespace across clones" do
       a = attachment_model(uploaded_data: stub_png_data, content_type: 'image/png')
-      a.root_attachment_id.should be_nil
+      expect(a.root_attachment_id).to be_nil
       coursea = @course
       @context = courseb = course
 
@@ -885,101 +527,105 @@ describe Attachment do
 
       b = a.clone_for(courseb, nil, overwrite: true)
       b.save
-      b.root_attachment.should == a
-      b.namespace.should == "test_ns"
+      expect(b.root_attachment).to eq a
+      expect(b.namespace).to eq "test_ns"
 
       new_a = b.clone_for(coursea, nil, overwrite: true)
       new_a.save
-      new_a.should == a
-      new_a.namespace.should == "test_ns"
+      expect(new_a).to eq a
+      expect(new_a.namespace).to eq "test_ns"
     end
   end
 
   context "adheres_to_policy" do
-    it "should not allow unauthorized users to read files" do
-      user = user_model
-      a = attachment_model
+    let_once(:user) { user_model }
+    let_once(:course) do
+      course_model
+      @course.offer
       @course.update_attribute(:is_public, false)
-      a.grants_right?(user, nil, :read).should eql(false)
+      @course
+    end
+    let_once(:student) do
+      course.enroll_student(user_model).accept
+      @user
+    end
+    let_once(:attachment) do
+      attachment_model(context: course)
+    end
+
+    it "should not allow unauthorized users to read files" do
+      a = attachment_model(context: course_model)
+      @course.update_attribute(:is_public, false)
+      expect(a.grants_right?(user, :read)).to eql(false)
     end
 
     it "should allow anonymous access for public contexts" do
-      user = user_model
-      a = attachment_model
+      a = attachment_model(context: course_model)
       @course.update_attribute(:is_public, true)
-      a.grants_right?(user, nil, :read).should eql(false)
+      expect(a.grants_right?(user, :read)).to eql(false)
     end
 
     it "should allow students to read files" do
-      a = attachment_model
-      @course.update_attribute(:is_public, false)
-      user = user_model
-      @course.offer
-      @course.enroll_student(user).accept
+      a = attachment
       a.reload
-      a.grants_right?(user, nil, :read).should eql(true)
+      expect(a.grants_right?(student, :read)).to eql(true)
     end
 
     it "should allow students to download files" do
-      a = attachment_model
-      @course.offer
-      @course.update_attribute(:is_public, false)
-      user = user_model
-      @course.enroll_student(user).accept
+      a = attachment
       a.reload
-      a.grants_right?(user, nil, :download).should eql(true)
+      expect(a.grants_right?(student, :download)).to eql(true)
     end
 
     it "should allow students to read (but not download) locked files" do
-      a = attachment_model
+      a = attachment
       a.update_attribute(:locked, true)
-      @course.offer
-      @course.update_attribute(:is_public, false)
-      user = user_model
-      @course.enroll_student(user).accept
       a.reload
-      a.grants_right?(user, nil, :read).should eql(true)
-      a.grants_right?(user, nil, :download).should eql(false)
+      expect(a.grants_right?(student, :read)).to eql(true)
+      expect(a.grants_right?(student, :download)).to eql(false)
     end
 
     it "should allow user access based on 'file_access_user_id' and 'file_access_expiration' in the session" do
-      a = attachment_model
-      @course.offer
-      @course.update_attribute(:is_public, false)
-      user = user_model
-      @course.enroll_student(user).accept
-      a.reload
-      a.grants_right?(nil, nil, :read).should eql(false)
-      a.grants_right?(nil, nil, :read).should eql(false)
-      a.grants_right?(nil, {'file_access_user_id' => user.id, 'file_access_expiration' => 1.hour.from_now.to_i}, :read).should eql(true)
-      a.grants_right?(nil, {'file_access_user_id' => user.id, 'file_access_expiration' => 1.hour.from_now.to_i}, :download).should eql(true)
+      a = attachment
+      expect(a.grants_right?(nil, :read)).to eql(false)
+      expect(a.grants_right?(nil, :download)).to eql(false)
+      expect(a.grants_right?(nil, {'file_access_user_id' => student.id, 'file_access_expiration' => 1.hour.from_now.to_i}, :read)).to eql(true)
+      expect(a.grants_right?(nil, {'file_access_user_id' => student.id, 'file_access_expiration' => 1.hour.from_now.to_i}, :download)).to eql(true)
     end
+
+    it "should allow user access to anyone if the course is public to auth users (with 'file_access_user_id' and 'file_access_expiration' in the session)" do
+      a = attachment_model(context: course)
+
+      expect(a.grants_right?(nil, {'file_access_user_id' => user.id, 'file_access_expiration' => 1.hour.from_now.to_i}, :read)).to eql(false)
+      expect(a.grants_right?(nil, {'file_access_user_id' => user.id, 'file_access_expiration' => 1.hour.from_now.to_i}, :download)).to eql(false)
+
+      course.is_public_to_auth_users = true
+      course.save!
+      a.reload
+
+      expect(a.grants_right?(nil, :read)).to eql(false)
+      expect(a.grants_right?(nil, :download)).to eql(false)
+      expect(a.grants_right?(nil, {'file_access_user_id' => user.id, 'file_access_expiration' => 1.hour.from_now.to_i}, :read)).to eql(true)
+      expect(a.grants_right?(nil, {'file_access_user_id' => user.id, 'file_access_expiration' => 1.hour.from_now.to_i}, :download)).to eql(true)
+    end
+
     it "should not allow user access based on incorrect 'file_access_user_id' in the session" do
-      a = attachment_model
-      @course.offer
-      @course.update_attribute(:is_public, false)
-      user = user_model
-      @course.enroll_student(user).accept
-      a.reload
-      a.grants_right?(nil, nil, :read).should eql(false)
-      a.grants_right?(nil, nil, :read).should eql(false)
-      a.grants_right?(nil, {'file_access_user_id' => 0, 'file_access_expiration' => 1.hour.from_now.to_i}, :read).should eql(false)
+      a = attachment
+      expect(a.grants_right?(nil, :read)).to eql(false)
+      expect(a.grants_right?(nil, :download)).to eql(false)
+      expect(a.grants_right?(nil, {'file_access_user_id' => 0, 'file_access_expiration' => 1.hour.from_now.to_i}, :read)).to eql(false)
     end
+
     it "should not allow user access based on incorrect 'file_access_expiration' in the session" do
-      a = attachment_model
-      @course.offer
-      @course.update_attribute(:is_public, false)
-      user = user_model
-      @course.enroll_student(user).accept
-      a.reload
-      a.grants_right?(nil, nil, :read).should eql(false)
-      a.grants_right?(nil, nil, :read).should eql(false)
-      a.grants_right?(nil, {'file_access_user_id' => user.id, 'file_access_expiration' => 1.minute.ago.to_i}, :read).should eql(false)
+      a = attachment
+      expect(a.grants_right?(nil, :read)).to eql(false)
+      expect(a.grants_right?(nil, :download)).to eql(false)
+      expect(a.grants_right?(nil, {'file_access_user_id' => student.id, 'file_access_expiration' => 1.minute.ago.to_i}, :read)).to eql(false)
     end
   end
 
   context "duplicate handling" do
-    before(:each) do
+    before :once do
       course_model
       @a1 = attachment_with_context(@course, :display_name => "a1")
       @a2 = attachment_with_context(@course, :display_name => "a2")
@@ -989,20 +635,40 @@ describe Attachment do
     it "should handle overwriting duplicates" do
       @a.display_name = 'a1'
       deleted = @a.handle_duplicates(:overwrite)
-      @a.file_state.should == 'available'
+      expect(@a.file_state).to eq 'available'
       @a1.reload
-      @a1.file_state.should == 'deleted'
-      deleted.should == [ @a1 ]
+      expect(@a1.file_state).to eq 'deleted'
+      expect(@a1.replacement_attachment).to eql @a
+      expect(deleted).to eq [ @a1 ]
+    end
+
+    it "should update replacement pointers to replaced files" do
+      @a.update_attribute(:display_name, 'a1')
+      @a.handle_duplicates(:overwrite)
+      expect(@a1.reload.replacement_attachment).to eql @a
+      again = attachment_with_context(@course, :display_name => 'a1')
+      again.handle_duplicates(:overwrite)
+      expect(@a1.reload.replacement_attachment).to eql again
+    end
+
+    it "should update replacement pointers to replaced-then-renamed files" do
+      @a.update_attribute(:display_name, 'a1')
+      @a.handle_duplicates(:overwrite)
+      expect(@a1.reload.replacement_attachment).to eql @a
+      @a.update_attribute(:display_name, 'renamed')
+      again = attachment_with_context(@course, :display_name => 'renamed')
+      again.handle_duplicates(:overwrite)
+      expect(@a1.reload.replacement_attachment).to eql again
     end
 
     it "should handle renaming duplicates" do
       @a.display_name = 'a1'
       deleted = @a.handle_duplicates(:rename)
-      deleted.should be_empty
-      @a.file_state.should == 'available'
+      expect(deleted).to be_empty
+      expect(@a.file_state).to eq 'available'
       @a1.reload
-      @a1.file_state.should == 'available'
-      @a.display_name.should == 'a1-1'
+      expect(@a1.file_state).to eq 'available'
+      expect(@a.display_name).to eq 'a1-1'
     end
 
     it "should update ContentTags when overwriting" do
@@ -1014,31 +680,46 @@ describe Attachment do
       @a.display_name = 'a1'
       @a.handle_duplicates(:overwrite)
       tag1.reload
-      tag1.should be_active
-      tag1.content_id.should == @a.id
+      expect(tag1).to be_active
+      expect(tag1.content_id).to eq @a.id
 
       @a2.destroy
       tag2.reload
-      tag2.should be_deleted
+      expect(tag2).to be_deleted
+    end
+
+    it "should find replacement file by id if name changes" do
+      @a.display_name = 'a1'
+      @a.handle_duplicates(:overwrite)
+      @a.display_name = 'renamed!!'
+      @a.save!
+      expect(@course.attachments.find(@a1.id)).to eql @a
+    end
+
+    it "should find replacement file by name if id isn't present" do
+      @a.display_name = 'a1'
+      @a.handle_duplicates(:overwrite)
+      @a1.update_attribute(:replacement_attachment_id, nil)
+      expect(@course.attachments.find(@a1.id)).to eql @a
     end
   end
 
   describe "make_unique_filename" do
     it "should find a unique name for files" do
       existing_files = %w(a.txt b.txt c.txt)
-      Attachment.make_unique_filename("d.txt", existing_files).should == "d.txt"
-      existing_files.should_not be_include(Attachment.make_unique_filename("b.txt", existing_files))
+      expect(Attachment.make_unique_filename("d.txt", existing_files)).to eq "d.txt"
+      expect(existing_files).not_to be_include(Attachment.make_unique_filename("b.txt", existing_files))
 
       existing_files = %w(/a/b/a.txt /a/b/b.txt /a/b/c.txt)
-      Attachment.make_unique_filename("/a/b/d.txt", existing_files).should == "/a/b/d.txt"
+      expect(Attachment.make_unique_filename("/a/b/d.txt", existing_files)).to eq "/a/b/d.txt"
       new_name = Attachment.make_unique_filename("/a/b/b.txt", existing_files)
-      existing_files.should_not be_include(new_name)
-      new_name.should match(%r{^/a/b/b[^.]+\.txt})
+      expect(existing_files).not_to be_include(new_name)
+      expect(new_name).to match(%r{^/a/b/b[^.]+\.txt})
     end
   end
 
-  context "cacheable s3 urls" do
-    before(:each) do
+  context "download/inline urls" do
+    before :once do
       course_model
     end
 
@@ -1046,23 +727,23 @@ describe Attachment do
       attachment = attachment_with_context(@course, :display_name => 'foo')
       attachment.expects(:authenticated_s3_url).at_least(0) # allow other calls due to, e.g., save
       attachment.expects(:authenticated_s3_url).with(has_entry(:response_content_disposition => %(attachment; filename="foo"; filename*=UTF-8''foo)))
+      attachment.download_url
       attachment.expects(:authenticated_s3_url).with(has_entry(:response_content_disposition => %(inline; filename="foo"; filename*=UTF-8''foo)))
-      attachment.cacheable_s3_inline_url
-      attachment.cacheable_s3_download_url
+      attachment.inline_url
     end
 
     it "should use the display_name, not filename, in the response-content-disposition" do
       attachment = attachment_with_context(@course, :filename => 'bar', :display_name => 'foo')
       attachment.expects(:authenticated_s3_url).at_least(0) # allow other calls due to, e.g., save
       attachment.expects(:authenticated_s3_url).with(has_entry(:response_content_disposition => %(attachment; filename="foo"; filename*=UTF-8''foo)))
-      attachment.cacheable_s3_inline_url
+      attachment.download_url
     end
 
     it "should http quote the filename in the response-content-disposition if necessary" do
       attachment = attachment_with_context(@course, :display_name => 'fo"o')
       attachment.expects(:authenticated_s3_url).at_least(0) # allow other calls due to, e.g., save
       attachment.expects(:authenticated_s3_url).with(has_entry(:response_content_disposition => %(attachment; filename="fo\\"o"; filename*=UTF-8''fo%22o)))
-      attachment.cacheable_s3_inline_url
+      attachment.download_url
     end
 
     it "should sanitize filename with iconv" do
@@ -1070,19 +751,19 @@ describe Attachment do
       sanitized_filename = Iconv.conv("ASCII//TRANSLIT//IGNORE", "UTF-8", a.display_name)
       a.expects(:authenticated_s3_url).at_least(0)
       a.expects(:authenticated_s3_url).with(has_entry(:response_content_disposition => %(attachment; filename="#{sanitized_filename}"; filename*=UTF-8''%E7%B3%9F%E7%B3%95.pdf)))
-      a.cacheable_s3_inline_url
+      a.download_url
     end
 
     it "should escape all non-alphanumeric characters in the utf-8 filename" do
       attachment = attachment_with_context(@course, :display_name => '"This file[0] \'{has}\' \# awesome `^<> chars 100%,|<-pipe"')
       attachment.expects(:authenticated_s3_url).at_least(0) # allow other calls due to, e.g., save
       attachment.expects(:authenticated_s3_url).with(has_entry(:response_content_disposition => %(attachment; filename="\\\"This file[0] '{has}' \\# awesome `^<> chars 100%,|<-pipe\\\""; filename*=UTF-8''%22This%20file%5B0%5D%20%27%7Bhas%7D%27%20%5C%23%20awesome%20%60%5E%3C%3E%20chars%20100%25%2C%7C%3C%2Dpipe%22)))
-      attachment.cacheable_s3_inline_url
+      attachment.download_url
     end
   end
 
   context "root_account_id" do
-    before do
+    before :once do
       account_model
       course_model(:account => @account)
       @a = attachment_with_context(@course)
@@ -1090,31 +771,31 @@ describe Attachment do
 
     it "should return account id for normal namespaces" do
       @a.namespace = "account_#{@account.id}"
-      @a.root_account_id.should == @account.id
+      expect(@a.root_account_id).to eq @account.id
     end
 
     it "should return account id for localstorage namespaces" do
       @a.namespace = "_localstorage_/#{@account.file_namespace}"
-      @a.root_account_id.should == @account.id
+      expect(@a.root_account_id).to eq @account.id
     end
 
     it "should immediately infer the namespace if not yet set" do
       Attachment.domain_namespace = nil
       @a = Attachment.new(:context => @course)
-      @a.should be_new_record
-      @a.read_attribute(:namespace).should be_nil
-      @a.namespace.should_not be_nil
-      @a.read_attribute(:namespace).should_not be_nil
-      @a.root_account_id.should == @account.id
+      expect(@a).to be_new_record
+      expect(@a.read_attribute(:namespace)).to be_nil
+      expect(@a.namespace).not_to be_nil
+      expect(@a.read_attribute(:namespace)).not_to be_nil
+      expect(@a.root_account_id).to eq @account.id
     end
 
     it "should not infer the namespace if it's not a new record" do
       Attachment.domain_namespace = nil
       attachment_model(:context => submission_model)
-      @attachment.should_not be_new_record
-      @attachment.read_attribute(:namespace).should be_nil
-      @attachment.namespace.should be_nil
-      @attachment.read_attribute(:namespace).should be_nil
+      expect(@attachment).not_to be_new_record
+      expect(@attachment.read_attribute(:namespace)).to be_nil
+      expect(@attachment.namespace).to be_nil
+      expect(@attachment.read_attribute(:namespace)).to be_nil
     end
   end
 
@@ -1122,13 +803,13 @@ describe Attachment do
     it "should include the charset when appropriate" do
       a = Attachment.new
       a.content_type = 'text/html'
-      a.content_type_with_encoding.should == 'text/html'
+      expect(a.content_type_with_encoding).to eq 'text/html'
       a.encoding = ''
-      a.content_type_with_encoding.should == 'text/html'
+      expect(a.content_type_with_encoding).to eq 'text/html'
       a.encoding = 'UTF-8'
-      a.content_type_with_encoding.should == 'text/html; charset=UTF-8'
+      expect(a.content_type_with_encoding).to eq 'text/html; charset=UTF-8'
       a.encoding = 'mycustomencoding'
-      a.content_type_with_encoding.should == 'text/html; charset=mycustomencoding'
+      expect(a.content_type_with_encoding).to eq 'text/html; charset=mycustomencoding'
     end
 
     it "should schedule encoding detection when appropriate" do
@@ -1145,38 +826,30 @@ describe Attachment do
 
     it "should properly infer encoding" do
       attachment_model(:uploaded_data => stub_png_data('blank.gif', "GIF89a\001\000\001\000\200\377\000\377\377\377\000\000\000,\000\000\000\000\001\000\001\000\000\002\002D\001\000;"))
-      @attachment.encoding.should be_nil
+      expect(@attachment.encoding).to be_nil
       @attachment.infer_encoding
       # can't figure out GIF encoding
-      @attachment.encoding.should == ''
+      expect(@attachment.encoding).to eq ''
 
       attachment_model(:uploaded_data => stub_png_data('blank.txt', "Hello World!"))
-      @attachment.encoding.should be_nil
+      expect(@attachment.encoding).to be_nil
       @attachment.infer_encoding
-      @attachment.encoding.should == 'UTF-8'
+      expect(@attachment.encoding).to eq 'UTF-8'
 
       attachment_model(:uploaded_data => stub_png_data('blank.txt', "\xc2\xa9 2011"))
-      @attachment.encoding.should be_nil
+      expect(@attachment.encoding).to be_nil
       @attachment.infer_encoding
-      @attachment.encoding.should == 'UTF-8'
+      expect(@attachment.encoding).to eq 'UTF-8'
+
+      attachment_model(:uploaded_data => stub_png_data('blank.txt', "can't read me"))
+      @attachment.stubs(:open).raises(IOError)
+      @attachment.infer_encoding
+      expect(@attachment.encoding).to eq nil
     end
   end
 
   context "sharding" do
     specs_require_sharding
-
-    it "should infer scribd mime type regardless of shard" do
-      scribd_mime_type_model(:extension => 'pdf')
-      attachment_model(:content_type => 'application/pdf')
-      @attachment.should be_scribdable
-      Attachment.clear_cached_mime_ids
-      @shard1.activate do
-        # need to create a context on this shard
-        @context = course_model(:account => Account.create!)
-        attachment_model(:content_type => 'application/pdf')
-        @attachment.should be_scribdable
-      end
-    end
 
     it "grants rights to owning user even if the user is on a seperate shard" do
       user = nil
@@ -1184,44 +857,99 @@ describe Attachment do
 
       @shard1.activate do
         user = User.create!
-        user.attachments.build.grants_right?(user, nil, :read).should be_true
+        expect(user.attachments.build.grants_right?(user, :read)).to be_truthy
       end
 
       @shard2.activate do
-        user.attachments.build.grants_right?(user, nil, :read).should be_true
+        expect(user.attachments.build.grants_right?(user, :read)).to be_truthy
       end
 
-      user.attachments.build.grants_right?(user, nil, :read).should be_true
+      expect(user.attachments.build.grants_right?(user, :read)).to be_truthy
     end
   end
 
   context "#change_namespace" do
-    before do
-      s3_storage!
+    before :once do
       @old_account = account_model
-      Attachment.domain_namespace = @old_account.file_namespace
-      @root = attachment_model
-      @child = attachment_model(:root_attachment => @root)
       @new_account = account_model
     end
 
+    before :each do
+      s3_storage!
+      Attachment.domain_namespace = @old_account.file_namespace
+      @root = attachment_model
+      @child = attachment_model(:root_attachment => @root)
+
+      @old_object = mock('old object')
+      @new_object = mock('new object')
+      new_full_filename = @root.full_filename.sub(@root.namespace, @new_account.file_namespace)
+      @objects = { @root.full_filename => @old_object, new_full_filename => @new_object }
+      @root.bucket.stubs(:objects).returns(@objects)
+    end
+
     it "should fail for non-root attachments" do
-      AWS::S3::S3Object.any_instance.expects(:rename_to).never
+      @old_object.expects(:copy_to).never
       expect { @child.change_namespace(@new_account.file_namespace) }.to raise_error
-      @root.reload.namespace.should == @old_account.file_namespace
-      @child.reload.namespace.should == @root.reload.namespace
+      expect(@root.reload.namespace).to eq @old_account.file_namespace
+      expect(@child.reload.namespace).to eq @root.reload.namespace
+    end
+
+    it "should not copy if the destination exists" do
+      @new_object.expects(:exists?).returns(true)
+      @old_object.expects(:copy_to).never
+      @root.change_namespace(@new_account.file_namespace)
+      expect(@root.namespace).to eq @new_account.file_namespace
+      expect(@child.reload.namespace).to eq @root.namespace
     end
 
     it "should rename root attachments and update children" do
-      AWS::S3::S3Object.any_instance.expects(:rename_to).with(@root.full_filename.sub(@old_account.id.to_s, @new_account.id.to_s), anything)
+      @new_object.expects(:exists?).returns(false)
+      @old_object.expects(:copy_to).with(@root.full_filename.sub(@old_account.id.to_s, @new_account.id.to_s), anything)
       @root.change_namespace(@new_account.file_namespace)
-      @root.namespace.should == @new_account.file_namespace
-      @child.reload.namespace.should == @root.namespace
+      expect(@root.namespace).to eq @new_account.file_namespace
+      expect(@child.reload.namespace).to eq @root.namespace
+    end
+  end
+
+  context "s3 storage with sharding" do
+
+    let(:sz) { "640x>" }
+    specs_require_sharding
+
+    before :each do
+      s3_storage!
+      attachment_model(:uploaded_data => stub_png_data, :filename => 'profile.png')
+    end
+
+    it "should have namespaced thumb" do
+
+      @shard1.activate do
+
+        @attachment.thumbnail || @attachment.build_thumbnail.save!
+        thumb = @attachment.thumbnail
+
+        # i can't seem to get a s3 url so I am just going to make sure the thumbnail namespace was inherited from the attachment
+        expect(thumb.namespace).to eq @attachment.namespace
+        expect(thumb.authenticated_s3_url).to be_include @attachment.namespace
+      end
+    end
+
+    it "shouldn't have namespaced thumb when namespace is nil" do
+
+      @shard1.activate do
+
+        @attachment.thumbnail || @attachment.build_thumbnail.save!
+        thumb = @attachment.thumbnail
+
+        # nil out namespace so we can make sure the url generating is working properly
+        thumb.namespace = nil
+        expect(thumb.authenticated_s3_url).not_to be_include @attachment.namespace
+      end
     end
   end
 
   context "dynamic thumbnails" do
-    let(:sz) { CollectionItemData::THUMBNAIL_SIZE }
+    let(:sz) { "640x>" }
 
     before do
       attachment_model(:uploaded_data => stub_png_data)
@@ -1230,20 +958,20 @@ describe Attachment do
     it "should use the default size if an unknown size is passed in" do
       @attachment.thumbnail || @attachment.build_thumbnail.save!
       url = @attachment.thumbnail_url(:size => "100x100")
-      url.should be_present
-      url.should == @attachment.thumbnail.authenticated_s3_url
+      expect(url).to be_present
+      expect(url).to eq @attachment.thumbnail.authenticated_s3_url
     end
 
     it "should generate the thumbnail on the fly" do
-      thumb = @attachment.thumbnails.find_by_thumbnail("640x>")
-      thumb.should == nil
+      thumb = @attachment.thumbnails.where(thumbnail: "640x>").first
+      expect(thumb).to eq nil
 
       @attachment.expects(:create_or_update_thumbnail).with(anything, sz, sz).returns { @attachment.thumbnails.create!(:thumbnail => "640x>", :uploaded_data => stub_png_data) }
       url = @attachment.thumbnail_url(:size => "640x>")
-      url.should be_present
-      thumb = @attachment.thumbnails.find_by_thumbnail("640x>")
-      thumb.should be_present
-      url.should == thumb.authenticated_s3_url
+      expect(url).to be_present
+      thumb = @attachment.thumbnails.where(thumbnail: "640x>").first
+      expect(thumb).to be_present
+      expect(url).to eq thumb.authenticated_s3_url
     end
 
     it "should use the existing thumbnail if present" do
@@ -1251,45 +979,47 @@ describe Attachment do
       url = @attachment.thumbnail_url(:size => "640x>")
       @attachment.expects(:create_dynamic_thumbnail).never
       url = @attachment.thumbnail_url(:size => "640x>")
-      thumb = @attachment.thumbnails.find_by_thumbnail("640x>")
-      url.should be_present
-      thumb.should be_present
-      url.should == thumb.authenticated_s3_url
-    end
-
-    describe 'when its a scribd document' do
-      before do
-        @attachment.scribd_doc = Scribd::Document.new
-        ScribdAPI.expects(:enabled?).times(0)
-      end
-
-      it 'returns the cached thumbnail if present' do
-        @attachment.cached_scribd_thumbnail = "THUMBNAIL_URL"
-        @attachment.thumbnail_url.should == "THUMBNAIL_URL"
-      end
-
-      it 'just returns nil if there is no cached thumbnail' do
-        @attachment.thumbnail_url.should be_nil
-      end
+      thumb = @attachment.thumbnails.where(thumbnail: "640x>").first
+      expect(url).to be_present
+      expect(thumb).to be_present
+      expect(url).to eq thumb.authenticated_s3_url
     end
   end
 
   describe '.allows_thumbnails_for_size' do
     it 'inevitably returns false if there is no size provided' do
-      Attachment.allows_thumbnails_of_size?(nil).should be_false
+      expect(Attachment.allows_thumbnails_of_size?(nil)).to be_falsey
     end
 
     it 'returns true if the provided size is in the configured dynamic sizes' do
-      Attachment.allows_thumbnails_of_size?(Attachment::DYNAMIC_THUMBNAIL_SIZES.first).should be_true
+      expect(Attachment.allows_thumbnails_of_size?(Attachment::DYNAMIC_THUMBNAIL_SIZES.first)).to be_truthy
     end
 
     it 'returns false if the provided size is not in the configured dynamic sizes' do
-      Attachment.allows_thumbnails_of_size?('nonsense').should be_false
+      expect(Attachment.allows_thumbnails_of_size?('nonsense')).to be_falsey
+    end
+  end
+
+  describe "thumbnail source image size limitation" do
+    before(:once) do
+      local_storage! # s3 attachment data is stubbed out, so there is no image to identify the size of
+      course
+    end
+
+    it 'creates thumbnails for smaller images' do
+      att = @course.attachments.create! :uploaded_data => jpeg_data_frd, :filename => 'ok.jpg'
+      expect(att.thumbnail).not_to be_nil
+      expect(att.thumbnail.width).not_to be_nil
+    end
+
+    it 'does not create thumbnails for larger images' do
+      att = @course.attachments.create! :uploaded_data => one_hundred_megapixels_of_highly_compressed_png_data, :filename => '3vil.png'
+      expect(att.thumbnail).to be_nil
     end
   end
 
   context "notifications" do
-    before :each do
+    before :once do
       course_model(:workflow_state => "available")
       # ^ enrolls @teacher in @course
 
@@ -1305,68 +1035,68 @@ describe Attachment do
 
     it "should send a single-file notification" do
       attachment_model(:uploaded_data => stub_file_data('file.txt', nil, 'text/html'), :content_type => 'text/html')
-      @attachment.need_notify.should be_true
+      expect(@attachment.need_notify).to be_truthy
 
       new_time = Time.now + 10.minutes
       Time.stubs(:now).returns(new_time)
       Attachment.do_notifications
 
       @attachment.reload
-      @attachment.need_notify.should_not be_true
-      Message.find_by_user_id_and_notification_name(@student.id, 'New File Added').should_not be_nil
+      expect(@attachment.need_notify).not_to be_truthy
+      expect(Message.where(user_id: @student, notification_name: 'New File Added').first).not_to be_nil
     end
 
     it "should send a batch notification" do
       att1 = attachment_model(:uploaded_data => stub_file_data('file1.txt', nil, 'text/html'), :content_type => 'text/html')
       att2 = attachment_model(:uploaded_data => stub_file_data('file2.txt', nil, 'text/html'), :content_type => 'text/html')
       att3 = attachment_model(:uploaded_data => stub_file_data('file3.txt', nil, 'text/html'), :content_type => 'text/html')
-      [att1, att2, att3].each {|att| att.need_notify.should be_true}
+      [att1, att2, att3].each {|att| expect(att.need_notify).to be_truthy}
 
       new_time = Time.now + 10.minutes
       Time.stubs(:now).returns(new_time)
       Attachment.do_notifications
 
-      [att1, att2, att3].each {|att| att.reload.need_notify.should_not be_true}
-      Message.find_by_user_id_and_notification_name(@student.id, 'New Files Added').should_not be_nil
+      [att1, att2, att3].each {|att| expect(att.reload.need_notify).not_to be_truthy}
+      expect(Message.where(user_id: @student, notification_name: 'New Files Added').first).not_to be_nil
     end
 
     it "should not notify before a file finishes uploading" do
       # it's weird, but file_state is 'deleted' until the upload completes, when it is changed to 'available'
       attachment_model(:file_state => 'deleted', :content_type => 'text/html')
-      @attachment.need_notify.should_not be_true
+      expect(@attachment.need_notify).not_to be_truthy
     end
 
     it "should postpone notification of a batch judged to be in-progress" do
       att1 = attachment_model(:uploaded_data => stub_file_data('file1.txt', nil, 'text/html'), :content_type => 'text/html')
       att2 = attachment_model(:uploaded_data => stub_file_data('file2.txt', nil, 'text/html'), :content_type => 'text/html')
       att3 = attachment_model(:uploaded_data => stub_file_data('file3.txt', nil, 'text/html'), :content_type => 'text/html')
-      [att1, att2, att3].each {|att| att.need_notify.should be_true}
+      [att1, att2, att3].each {|att| expect(att.need_notify).to be_truthy}
 
       new_time = Time.now + 2.minutes
       Time.stubs(:now).returns(new_time)
       Attachment.do_notifications
-      [att1, att2, att3].each {|att| att.reload.need_notify.should be_true}
-      Message.find_by_user_id_and_notification_name(@student.id, 'New Files Added').should be_nil
+      [att1, att2, att3].each {|att| expect(att.reload.need_notify).to be_truthy}
+      expect(Message.where(user_id: @student, notification_name: 'New File Added').first).to be_nil
 
       new_time = Time.now + 4.minutes
       Time.stubs(:now).returns(new_time)
       Attachment.do_notifications
-      [att1, att2, att3].each {|att| att.reload.need_notify.should_not be_true}
-      Message.find_by_user_id_and_notification_name(@student.id, 'New Files Added').should_not be_nil
+      [att1, att2, att3].each {|att| expect(att.reload.need_notify).not_to be_truthy}
+      expect(Message.where(user_id: @student, notification_name: 'New Files Added').first).not_to be_nil
     end
 
     it "should discard really old pending notifications" do
       attachment_model(:uploaded_data => stub_file_data('file.txt', nil, 'text/html'), :content_type => 'text/html')
-      @attachment.need_notify.should be_true
+      expect(@attachment.need_notify).to be_truthy
 
       new_time = Time.now + 1.week
       Time.stubs(:now).returns(new_time)
       Attachment.do_notifications
 
       @attachment.reload
-      @attachment.need_notify.should be_false
-      Message.find_by_user_id_and_notification_name(@student.id, 'New Files Added').should be_nil
-      Message.find_by_user_id_and_notification_name(@student.id, 'New File Added').should be_nil
+      expect(@attachment.need_notify).to be_falsey
+      expect(Message.where(user_id: @student, notification_name: 'New File Added').first).to be_nil
+      expect(Message.where(user_id: @student, notification_name: 'New File Added').first).to be_nil
     end
 
     it "should respect save_without_broadcasting" do
@@ -1374,27 +1104,27 @@ describe Attachment do
       att2 = attachment_model(:file_state => 'deleted', :uploaded_data => stub_file_data('file2.txt', nil, 'text/html'), :content_type => 'text/html')
       att3 = attachment_model(:file_state => 'deleted', :uploaded_data => stub_file_data('file2.txt', nil, 'text/html'), :content_type => 'text/html')
 
-      att1.need_notify.should_not be_true
+      expect(att1.need_notify).not_to be_truthy
       att1.file_state = 'available'
       att1.save!
-      att1.need_notify.should be_true
+      expect(att1.need_notify).to be_truthy
 
-      att2.need_notify.should_not be_true
+      expect(att2.need_notify).not_to be_truthy
       att2.file_state = 'available'
       att2.save_without_broadcasting
-      att2.need_notify.should_not be_true
+      expect(att2.need_notify).not_to be_truthy
 
-      att3.need_notify.should_not be_true
+      expect(att3.need_notify).not_to be_truthy
       att3.file_state = 'available'
       att3.save_without_broadcasting!
-      att3.need_notify.should_not be_true
+      expect(att3.need_notify).not_to be_truthy
     end
 
     it "should not send notifications to students if the file is uploaded to a locked folder" do
       @teacher.register!
       cc = @teacher.communication_channels.create!(:path => "default@example.com")
       cc.confirm!
-      NotificationPolicy.create!(:notification => Notification.find_by_name('New File Added'), :communication_channel => cc, :frequency => "immediately")
+      NotificationPolicy.create!(:notification => Notification.where(name: 'New File Added').first, :communication_channel => cc, :frequency => "immediately")
 
       attachment_model(:uploaded_data => stub_file_data('file.txt', nil, 'text/html'), :content_type => 'text/html')
 
@@ -1406,16 +1136,16 @@ describe Attachment do
       Attachment.do_notifications
 
       @attachment.reload
-      @attachment.need_notify.should_not be_true
-      Message.find_by_user_id_and_notification_name(@student.id, 'New File Added').should be_nil
-      Message.find_by_user_id_and_notification_name(@teacher.id, 'New File Added').should_not be_nil
+      expect(@attachment.need_notify).not_to be_truthy
+      expect(Message.where(user_id: @student, notification_name: 'New File Added').first).to be_nil
+      expect(Message.where(user_id: @teacher, notification_name: 'New File Added').first).not_to be_nil
     end
 
     it "should not send notifications to students if the files navigation is hidden from student view" do
       @teacher.register!
       cc = @teacher.communication_channels.create!(:path => "default@example.com")
       cc.confirm!
-      NotificationPolicy.create!(:notification => Notification.find_by_name('New File Added'), :communication_channel => cc, :frequency => "immediately")
+      NotificationPolicy.create!(:notification => Notification.where(name: 'New File Added').first, :communication_channel => cc, :frequency => "immediately")
 
       attachment_model(:uploaded_data => stub_file_data('file.txt', nil, 'text/html'), :content_type => 'text/html')
 
@@ -1427,9 +1157,9 @@ describe Attachment do
       Attachment.do_notifications
 
       @attachment.reload
-      @attachment.need_notify.should_not be_true
-      Message.find_by_user_id_and_notification_name(@student.id, 'New File Added').should be_nil
-      Message.find_by_user_id_and_notification_name(@teacher.id, 'New File Added').should_not be_nil
+      expect(@attachment.need_notify).not_to be_truthy
+      expect(Message.where(user_id: @student, notification_name: 'New File Added').first).to be_nil
+      expect(Message.where(user_id: @teacher, notification_name: 'New File Added').first).not_to be_nil
     end
 
     it "should not fail if the attachment context does not have participants" do
@@ -1449,7 +1179,7 @@ describe Attachment do
       course_model
       attachment_model(:context => @course, :uploaded_data => stub_png_data, :size => 25)
       quota = Attachment.get_quota(@course)
-      quota[:quota_used].should == Attachment.minimum_size_for_quota
+      expect(quota[:quota_used]).to eq Attachment.minimum_size_for_quota
     end
   end
 
@@ -1463,34 +1193,39 @@ describe Attachment do
 
       it "should stream data to the block given" do
         callback = false
-        @attachment.open { |data| data.should == "test"; callback = true }
-        callback.should == true
+        @attachment.open { |data| expect(data).to eq "test"; callback = true }
+        expect(callback).to eq true
       end
 
       it "should stream to a tempfile without a block given" do
         file = @attachment.open
-        file.should be_a(Tempfile)
-        file.read.should == "test"
+        expect(file).to be_a(Tempfile)
+        expect(file.read).to eq "test"
       end
     end
   end
 
   context "#process_s3_details!" do
-    before do
+    before :once do
+      attachment_model(filename: 'new filename')
+    end
+
+    before :each do
       Attachment.stubs(:local_storage?).returns(false)
       Attachment.stubs(:s3_storage?).returns(true)
-      attachment_model(filename: 'new filename', cached_scribd_thumbnail: "THUMBNAIL_URL")
       @attachment.stubs(:s3object).returns(mock('s3object'))
       @attachment.stubs(:after_attachment_saved)
     end
 
     context "deduplication" do
-      before do
+      before :once do
         attachment = @attachment
-        @existing_attachment = attachment_model(filename: 'existing filename', cached_scribd_thumbnail: "THUMBNAIL_URL")
-        @child_attachment = attachment_model(root_attachment: @existing_attachment, cached_scribd_thumbnail: "THUMBNAIL_URL")
+        @existing_attachment = attachment_model(filename: 'existing filename')
+        @child_attachment = attachment_model(root_attachment: @existing_attachment)
         @attachment = attachment
+      end
 
+      before :each do
         @existing_attachment.stubs(:s3object).returns(mock('existing_s3object'))
         @attachment.stubs(:find_existing_attachment_for_md5).returns(@existing_attachment)
       end
@@ -1508,17 +1243,12 @@ describe Attachment do
 
         it "should put the new attachment under the existing attachment" do
           @attachment.process_s3_details!({})
-          @attachment.reload.root_attachment.should == @existing_attachment
+          expect(@attachment.reload.root_attachment).to eq @existing_attachment
         end
 
         it "should retire the new attachment's filename" do
           @attachment.process_s3_details!({})
-          @attachment.reload.filename.should == @existing_attachment.filename
-        end
-
-        it "should retire the new attachment's cached_scribd_thumbnail" do
-          @attachment.process_s3_details!({})
-          @attachment.reload.cached_scribd_thumbnail.should be_nil
+          expect(@attachment.reload.filename).to eq @existing_attachment.filename
         end
       end
 
@@ -1534,7 +1264,7 @@ describe Attachment do
 
         it "should not put the new attachment under the existing attachment" do
           @attachment.process_s3_details!({})
-          @attachment.reload.root_attachment.should be_nil
+          expect(@attachment.reload.root_attachment).to be_nil
         end
 
         it "should not retire the new attachment's filename" do
@@ -1542,46 +1272,114 @@ describe Attachment do
           @attachment.reload.filename == 'new filename'
         end
 
-        it "should not retire the new attachment's cached_scribd_thumbnail" do
-          @attachment.process_s3_details!({})
-          @attachment.reload.cached_scribd_thumbnail == 'scribd url'
-        end
-
         it "should put the existing attachment under the new attachment" do
           @attachment.process_s3_details!({})
-          @existing_attachment.reload.root_attachment.should == @attachment
+          expect(@existing_attachment.reload.root_attachment).to eq @attachment
         end
 
         it "should retire the existing attachment's filename" do
           @attachment.process_s3_details!({})
-          @existing_attachment.reload.read_attribute(:filename).should be_nil
-          @existing_attachment.filename.should == @attachment.filename
-        end
-
-        it "should retire the existing attachment's cached_scribd_thumbnail" do
-          @attachment.process_s3_details!({})
-          @existing_attachment.reload.cached_scribd_thumbnail.should be_nil
+          expect(@existing_attachment.reload.read_attribute(:filename)).to be_nil
+          expect(@existing_attachment.filename).to eq @attachment.filename
         end
 
         it "should reparent the child attachment under the new attachment" do
           @attachment.process_s3_details!({})
-          @child_attachment.reload.root_attachment.should == @attachment
-        end
-
-        it "should retire the child attachment's cached_scribd_thumbnail" do
-          @attachment.process_s3_details!({})
-          @child_attachment.reload.cached_scribd_thumbnail.should be_nil
+          expect(@child_attachment.reload.root_attachment).to eq @attachment
         end
       end
     end
   end
-end
 
-def processing_model
-  ScribdAPI.stubs(:get_status).returns(:status_from_scribd)
-  ScribdAPI.stubs(:set_user).returns(true)
-  ScribdAPI.stubs(:upload).returns(Scribd::Document.new)
-  scribdable_attachment_model
-  @attachment.submit_to_scribd!
-end
+  context 'permissions' do
+    describe ':attach_to_submission_comment' do
+      it 'works for assignments if you own the attachment' do
+        @s1, @s2 = n_students_in_course(2)
+        @assignment = @course.assignments.create! name: 'blah'
+        @attachment = Attachment.create! context: @assignment,
+          filename: "foo.txt",
+          uploaded_data: StringIO.new("bar"),
+          user: @s1
+        expect(@attachment.grants_right?(@s1, :attach_to_submission_comment)).to be_truthy
+        expect(@attachment.grants_right?(@s2, :attach_to_submission_comment)).to be_falsey
+      end
+    end
+  end
 
+  describe "#full_path" do
+    it "shouldn't puke for things that don't have folders" do
+      attachment_obj_with_context(Account.default.default_enrollment_term)
+      @attachment.folder = nil
+      expect(@attachment.full_path).to eq "/#{@attachment.display_name}"
+    end
+  end
+
+  describe '.context_type' do
+    it 'returns the correct representation of a quiz statistics relation' do
+      stats = Quizzes::QuizStatistics.create!(report_type: 'student_analysis')
+      attachment = attachment_obj_with_context(Account.default.default_enrollment_term)
+      attachment.context = stats
+      attachment.save
+      expect(attachment.context_type).to eq "Quizzes::QuizStatistics"
+
+      Attachment.where(id: attachment).update_all(context_type: 'QuizStatistics')
+
+      expect(Attachment.find(attachment.id).context_type).to eq 'Quizzes::QuizStatistics'
+    end
+  end
+
+  describe ".clone_url_as_attachment" do
+    it "should reject invalid urls" do
+      expect { Attachment.clone_url_as_attachment("ftp://some/stuff") }.to raise_error(ArgumentError)
+    end
+
+    it "should not raise on non-200 responses" do
+      url = "http://example.com/test.png"
+      CanvasHttp.expects(:get).with(url).yields(stub('code' => '401'))
+      expect { Attachment.clone_url_as_attachment(url) }.to raise_error(CanvasHttp::InvalidResponseCodeError)
+    end
+
+    it "should use an existing attachment if passed in" do
+      url = "http://example.com/test.png"
+      a = attachment_model
+      CanvasHttp.expects(:get).with(url).yields(FakeHttpResponse.new('200', 'this is a jpeg', 'content-type' => 'image/jpeg'))
+      Attachment.clone_url_as_attachment(url, :attachment => a)
+      a.save!
+      expect(a.open.read).to eq "this is a jpeg"
+    end
+
+    it "should detect the content_type from the body" do
+      url = "http://example.com/test.png"
+      CanvasHttp.expects(:get).with(url).yields(FakeHttpResponse.new('200', 'this is a jpeg', 'content-type' => 'image/jpeg'))
+      att = Attachment.clone_url_as_attachment(url)
+      expect(att).to be_present
+      expect(att).to be_new_record
+      expect(att.content_type).to eq 'image/jpeg'
+      att.context = Account.default
+      att.save!
+      expect(att.open.read).to eq 'this is a jpeg'
+    end
+  end
+
+  describe "infer_namespace" do
+    it "should infer the correct namespace from the root attachment" do
+      local_storage!
+      Rails.env.stubs(:development?).returns(true)
+      course
+      a1 = attachment_model(context: @course, uploaded_data: default_uploaded_data)
+      a2 = attachment_model(context: @course, uploaded_data: default_uploaded_data)
+      expect(a2.root_attachment).to eql(a1)
+      expect(a2.namespace).to eql(a1.namespace)
+    end
+  end
+
+  it "should be able to add a hidden attachment as a context module item" do
+    course
+    att = attachment_model(context: @course, uploaded_data: default_uploaded_data)
+    att.hidden = true
+    att.save!
+    mod = @course.context_modules.create!(:name => "some module")
+    tag1 = mod.add_item(:id => att.id, :type => 'attachment')
+    expect(tag1).not_to be_nil
+  end
+end

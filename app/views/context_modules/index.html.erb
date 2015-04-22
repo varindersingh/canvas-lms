@@ -1,3 +1,13 @@
-<% jammit_css :context_modules2 %>
 <% content_for :page_title, join_title(t('titles.course_modules', "Course Modules"), @context.name) %>
-<%= render :partial => "context_modules/content" %>
+
+<% if @context.feature_enabled?(:modules_next) %>
+  <%
+    @body_classes << 'padless-content'
+    jammit_css :modules_next
+    js_bundle :modules
+  %>
+<% else %>
+	<% jammit_css :context_modules2 %>
+  <%= render :partial => "context_modules/content_next" %>
+<% end %>
+

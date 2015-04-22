@@ -23,6 +23,7 @@ class ZipFileImport < ActiveRecord::Base
   belongs_to :attachment
   belongs_to :folder
   belongs_to :context, :polymorphic => true
+  validates_inclusion_of :context_type, :allow_nil => true, :in => ['Group', 'User', 'Course']
   validates_presence_of :context
 
   serialize :data
@@ -74,10 +75,10 @@ class ZipFileImport < ActiveRecord::Base
     self.workflow_state = :imported
     self.save
   rescue => e
-    ErrorReport.log_exception(:zip_file_import, e)
+    Canvas::Errors.capture_exception(:zip_file_import, e)
 
     self.data[:error_message] = e.to_s
-    self.data[:stack_trace] = "#{e.to_s}\n#{e.backtrace.join("\n")}"
+    self.data[:stack_trace] = "#{e}\n#{e.backtrace.join("\n")}"
     self.workflow_state = "failed"
     self.save
   end

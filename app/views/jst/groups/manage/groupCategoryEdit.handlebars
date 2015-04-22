@@ -1,4 +1,4 @@
-<div class="form-dialog-content pad-box form-inline">
+<div class="form-dialog-content pad-box form-inline group-category-edit">
   <fieldset class="pad-box{{#if ENV.allow_self_signup}} dotted-separator{{/if}}">
     <label>
       {{#t "group_set_name"}}Group Set Name{{/t}} &nbsp;
@@ -6,23 +6,18 @@
     </label>
   </fieldset>
   {{#if ENV.allow_self_signup}}
-  <fieldset class="pad-box">
+  <fieldset class="pad-box dotted-separator">
     <div class="control-group">
-      <label class="checkbox">
-        {{checkbox "enable_self_signup" class="self-signup-toggle"}}
+      <label class="checkbox" for="enable_self_signup-{{uniqid}}">
+        {{checkbox "enable_self_signup" uniqid=true class="self-signup-toggle"}}
         {{#t "allow_self_signup"}}Allow self sign-up{{/t}}
       </label>
-      <a href="#"
-        class="about-self-signup icon-question"
-        style="padding-right:10px"
-        title="<div class='popover-content'><p>{{#t "self_signup_description"}}You can create sets of groups where students can sign up on their own. Students are still limited to being in only one group in the set, but this way students can organize themselves into groups instead of needing the teacher to do the work. Note that as long as this option is enabled, students can move themselves from one group to another.{{/t}}</p></div>"
-        aria-label="{{#t "what_is_this"}}What is this?{{/t}}"
-        data-tooltip='{"tooltipClass":"popover", "position":"right"}'></a>
+      {{> [groups/manage/selfSignupHelp]}}
     </div>
     <div class="self-signup-controls">
       <div class="control-group">
-        <label class="checkbox">
-          {{checkbox "restrict_self_signup"}}
+        <label class="checkbox" for="restrict_self_signup-{{uniqid}}">
+          {{checkbox "restrict_self_signup" uniqid=true}}
           {{#t "require_same_section"}}Require group members to be in the same section{{/t}}
         </label>
       </div>
@@ -35,9 +30,17 @@
         <span class="hint-text">
           ({{#t "leave_group_limit_blank"}}Leave blank for no limit{{/t}})
         </span>
+        <div>
+          <strong>
+            <em>
+              {{#t "group_limit_override"}}Changing this will override any individually set group limits{{/t}}
+            </em>
+          </strong>
+        </div>
       </div>
     </div>
   </fieldset>
+  {{> [groups/manage/autoLeadershipControls]}}
   {{/if}}
 </div>
 <div class="form-controls">

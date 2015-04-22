@@ -21,7 +21,7 @@ module SIS
 
     def process
       start = Time.now
-      importer = Work.new(@batch_id, @root_account, @logger)
+      importer = Work.new(@batch, @root_account, @logger)
       Group.process_as_sis(@sis_options) do
         yield importer
       end
@@ -33,8 +33,8 @@ module SIS
     class Work
       attr_accessor :success_count
 
-      def initialize(batch_id, root_account, logger)
-        @batch_id = batch_id
+      def initialize(batch, root_account, logger)
+        @batch = batch
         @root_account = root_account
         @logger = logger
         @success_count = 0
@@ -49,13 +49,13 @@ module SIS
         account = nil
         if account_id.present?
           account = @accounts_cache[account_id]
-          account ||= Account.find_by_root_account_id_and_sis_source_id(@root_account.id, account_id)
+          account ||= @root_account.all_accounts.where(sis_source_id: account_id).first
           raise ImportError, "Parent account didn't exist for #{account_id}" unless account
           @accounts_cache[account.sis_source_id] = account
         end
         account ||= @root_account
 
-        group = Group.find_by_root_account_id_and_sis_source_id(@root_account.id, group_id)
+        group = @root_account.all_groups.where(sis_source_id: group_id).first
         unless group
           raise ImportError, "No name given for group #{group_id}, skipping" if name.blank?
           raise ImportError, "Improper status \"#{status}\" for group #{group_id}, skipping" unless status =~ /\A(available|closed|completed|deleted)/i
@@ -68,7 +68,7 @@ module SIS
         # must set .context, not just .account, since these are account-level groups
         group.context = account
         group.sis_source_id = group_id
-        group.sis_batch_id = @batch_id
+        group.sis_batch_id = @batch.id if @batch
 
         case status
         when /available/i

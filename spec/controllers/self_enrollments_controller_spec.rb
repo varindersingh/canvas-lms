@@ -21,26 +21,27 @@ require File.expand_path(File.dirname(__FILE__) + '/../spec_helper')
 describe SelfEnrollmentsController do
   describe "GET 'new'" do
     before do
+      Account.default.allow_self_enrollment!
       course(:active_all => true)
       @course.update_attribute(:self_enrollment, true)
     end
 
     it "should render if the course is open for enrollment" do
       get 'new', :self_enrollment_code => @course.self_enrollment_code
-      response.should be_success
+      expect(response).to be_success
     end
 
     it "should do the delegated auth dance" do
       account = account_with_cas({:account => Account.default})
       
       get 'new', :self_enrollment_code => @course.self_enrollment_code
-      response.should redirect_to login_url
+      expect(response).to redirect_to login_url
     end
 
     it "should not render for an incorrect code" do
-      lambda {
+      assert_page_not_found do
         get 'new', :self_enrollment_code => 'abc'
-      }.should raise_exception(ActiveRecord::RecordNotFound)
+      end
     end
 
     it "should render even if self_enrollment is disabled" do
@@ -48,65 +49,20 @@ describe SelfEnrollmentsController do
       @course.update_attribute(:self_enrollment, false)
 
       get 'new', :self_enrollment_code => code
-      response.should be_success
-    end
-  end
-
-  describe "POST 'create'" do
-    before do
-      Account.default.update_attribute(:settings, :self_enrollment => 'any', :open_registration => true)
-      course(:active_all => true)
-      @course.update_attribute(:self_enrollment, true)
+      expect(response).to be_success
     end
 
-    it "should enroll the currently logged in user" do
-      user
-      user_session(@user, @pseudonym)
-
-      post 'create', :self_enrollment_code => @course.self_enrollment_code
-      response.should be_success
-      @user.enrollments.length.should == 1
-      @enrollment = @user.enrollments.first
-      @enrollment.course.should == @course
-      @enrollment.workflow_state.should == 'active'
-      @enrollment.should be_self_enrolled
+    it "should default assign login_label_name to 'email'" do
+      get 'new', :self_enrollment_code => @course.self_enrollment_code
+      expect(assigns(:login_label_name)).to eq("Email")
     end
 
-    it "should not enroll an unauthenticated user" do
-      post 'create', :self_enrollment_code => @course.self_enrollment_code
-      response.should redirect_to(login_url)
-    end
+    it "should change login_label_name when set on domain_root_account" do
+      custom_label = "batman is the best"
+      Account.any_instance.stubs(:login_handle_name).returns(custom_label)
 
-    it "should not enroll for an incorrect code" do
-      user
-      user_session(@user)
-
-      lambda {
-        post 'create', :self_enrollment_code => 'abc'
-      }.should raise_exception(ActiveRecord::RecordNotFound)
-      @user.enrollments.length.should == 0
-    end
-
-    it "should not enroll if self_enrollment is disabled" do
-      code = @course.self_enrollment_code
-      @course.update_attribute(:self_enrollment, false)
-      user
-      user_session(@user)
-
-      post 'create', :self_enrollment_code => code
-      response.status.should =~ /400 Bad Request/
-      @user.enrollments.length.should == 0
-    end
-
-    it "should not enroll if the course is full" do
-      @course.update_attribute(:self_enrollment_limit, 0)
-      user
-      user_session(@user)
-
-      post 'create', :self_enrollment_code => @course.self_enrollment_code
-      response.status.should =~ /400 Bad Request/
-      json = JSON.parse(response.body)
-      json["user"]["self_enrollment_code"].should be_present
+      get 'new', :self_enrollment_code => @course.self_enrollment_code
+      expect(assigns(:login_label_name)).to eq(custom_label)
     end
   end
 end

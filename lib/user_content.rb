@@ -1,8 +1,12 @@
+require 'nokogiri'
+require 'ritex'
+require 'securerandom'
+
 module UserContent
   def self.escape(str, current_host = nil)
     html = Nokogiri::HTML::DocumentFragment.parse(str)
     find_user_content(html) do |obj, uc|
-      uuid = UUIDSingleton.instance.generate
+      uuid = SecureRandom.uuid
       child = Nokogiri::XML::Node.new("iframe", html)
       child['class'] = 'user_content_iframe'
       child['name'] = uuid
@@ -93,22 +97,23 @@ module UserContent
 
   class HtmlRewriter
     AssetTypes = {
-      'assignments' => Assignment,
-      'announcements' => Announcement,
-      'calendar_events' => CalendarEvent,
-      'discussion_topics' => DiscussionTopic,
-      'collaborations' => Collaboration,
-      'files' => Attachment,
-      'conferences' => WebConference,
-      'quizzes' => Quiz,
-      'groups' => Group,
-      'wiki' => WikiPage,
+      'assignments' => :Assignment,
+      'announcements' => :Announcement,
+      'calendar_events' => :CalendarEvent,
+      'discussion_topics' => :DiscussionTopic,
+      'collaborations' => :Collaboration,
+      'files' => :Attachment,
+      'conferences' => :WebConference,
+      'quizzes' => :"Quizzes::Quiz",
+      'groups' => :Group,
+      'wiki' => :WikiPage,
+      'pages' => :WikiPage,
       'grades' => nil,
       'users' => nil,
       'external_tools' => nil,
       'file_contents' => nil,
-      'modules' => ContextModule,
-      'items' => ContentTag
+      'modules' => :ContextModule,
+      'items' => :ContentTag
     }
     DefaultAllowedTypes = AssetTypes.keys
 
@@ -154,7 +159,7 @@ module UserContent
 
       html.gsub(@toplevel_regex) do |relative_url|
         type, obj_id, rest = [$1, $2, $3]
-        if type != "wiki"
+        if type != "wiki" && type != "pages"
           if obj_id.to_i > 0
             obj_id = obj_id.to_i
           else
@@ -169,7 +174,9 @@ module UserContent
         end
 
         if asset_types.key?(type)
-          match = UriMatch.new(relative_url, type, asset_types[type], obj_id, rest)
+          klass = asset_types[type]
+          klass = klass.to_s.constantize if klass
+          match = UriMatch.new(relative_url, type, klass, obj_id, rest)
           handler = @handlers[type] || @default_handler
           (handler && handler.call(match)) || relative_url
         else
@@ -181,6 +188,7 @@ module UserContent
 
     # if content is nil, it'll query the block for the content if needed (lazy content load)
     def user_can_view_content?(content = nil, &get_content)
+      return false if user.blank? && content.respond_to?(:locked?) && content.locked?
       return true unless user
       # if user given, check that the user is allowed to manage all
       # context content, or read that specific item (and it's not locked)

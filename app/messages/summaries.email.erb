@@ -1,5 +1,5 @@
 <% define_content :link do -%>
-  <%= HostUrl.protocol %>://<%= primary_host %>
+  <%= dashboard_url %>
 <% end -%>
 <% define_content :subject do -%>
   <%= t :subject, "Recent Canvas Notifications" %>
@@ -16,11 +16,11 @@
 
 <%= delayed_message.name_of_topic %>
 
-    <%= indent(html_to_simple_text(delayed_message.summary, :base_url => content(:link)), 4) %>
-  
+    <%= CanvasTextHelper.indent(html_to_text(delayed_message.summary, :base_url => content(:link)), 4) %>
+
     <%= delayed_message.link %>
 <% end %>
 
 
 <%= t :notifications_link, "You can change your notification settings by visiting the following page:" %>
-<%= content(:link)  %>/profile/communication
+<%= communication_profile_url %>

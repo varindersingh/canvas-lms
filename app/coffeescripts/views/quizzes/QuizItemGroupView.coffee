@@ -5,11 +5,11 @@ define [
   'compiled/views/PublishIconView'
   'jst/quizzes/QuizItemGroupView'
   'compiled/views/quizzes/QuizItemView'
-], ($, _, CollectionView, PublishIconView, template, quizItemView) ->
+], ($, _, CollectionView, PublishIconView, template, QuizItemView) ->
 
   class ItemGroupView extends CollectionView
     template: template
-    itemView: quizItemView
+    itemView: QuizItemView
 
     tagName:   'div'
     className: 'item-group-condensed'
@@ -25,8 +25,27 @@ define [
     isEmpty: ->
       @collection.isEmpty() or @collection.all((m) -> m.get('hidden'))
 
-    attachCollection: ->
-      @collection.on('change:hidden', @render)
+    filterResults: (term) =>
+      anyChanged = false
+      @collection.forEach (model) =>
+        hidden = !@filter(model, term)
+        if !!model.get('hidden') != hidden
+          anyChanged = true
+          model.set('hidden', hidden)
+
+      @render() if anyChanged
+
+    filter: (model, term) =>
+      return true unless term
+
+      title = model.get('title').toLowerCase()
+      numMatches = 0
+      keys = term.toLowerCase().split(' ')
+      for part in keys
+        #not using match to avoid javascript string to regex oddness
+        numMatches++ if title.indexOf(part) != -1
+      numMatches == keys.length
+
 
     render: ->
       super
@@ -36,6 +55,3 @@ define [
     renderItem: (model) =>
       return if model.get 'hidden'
       super
-
-    createItemView: (model) ->
-      new @itemView model: model, publishIconView: new PublishIconView(model: model)

@@ -16,6 +16,8 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
+require 'aws-sdk'
+
 class DeveloperKey < ActiveRecord::Base
   include CustomValidations
 
@@ -38,7 +40,7 @@ class DeveloperKey < ActiveRecord::Base
   end
 
   def generate_api_key(overwrite=false)
-    self.api_key = AutoHandle.generate(nil, 64) if overwrite || !self.api_key
+    self.api_key = CanvasSlug.generate(nil, 64) if overwrite || !self.api_key
   end
 
   def self.default
@@ -54,17 +56,14 @@ class DeveloperKey < ActiveRecord::Base
       @special_keys ||= {}
 
       if Rails.env.test?
-        # TODO: we have to do this because tests run in transactions. maybe it'd
-        # be good to create some sort of of memoize_if_safe method, that only
-        # memoizes when we're caching classes and not in test mode? I dunno. But
-        # this stinks.
-        return @special_keys[default_key_name] = DeveloperKey.find_or_create_by_name(default_key_name)
+        # TODO: we have to do this because tests run in transactions
+        return @special_keys[default_key_name] = DeveloperKey.where(name: default_key_name).first_or_create
       end
 
       key = @special_keys[default_key_name]
       return key if key
       if (key_id = Setting.get("#{default_key_name}_developer_key_id", nil)) && key_id.present?
-        key = DeveloperKey.find_by_id(key_id)
+        key = DeveloperKey.where(id: key_id).first
       end
       return @special_keys[default_key_name] = key if key
       key = DeveloperKey.create!(:name => default_key_name)
@@ -81,5 +80,15 @@ class DeveloperKey < ActiveRecord::Base
     return self_domain.present? && other_domain.present? && (self_domain == other_domain || other_domain.end_with?(".#{self_domain}"))
   rescue URI::InvalidURIError
     return false
+  end
+
+  # for now, only one AWS account for SNS is supported
+  def self.sns
+    if !defined?(@sns)
+      settings = ConfigFile.load('sns')
+      @sns = nil
+      @sns = AWS::SNS.new(settings) if settings
+    end
+    @sns
   end
 end

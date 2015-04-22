@@ -18,28 +18,28 @@
 
 require File.expand_path(File.dirname(__FILE__) + '/../api_spec_helper')
 
-describe UsersController, :type => :integration do
+describe UsersController, type: :request do
   include Api
   include Api::V1::Assignment
 
-  before do
+  before :once do
     course_with_student(:active_all => true)
   end
 
   it "should check for auth" do
     get("/api/v1/users/self/activity_stream")
-    response.status.should == '401 Unauthorized'
+    assert_status(401)
 
     @course = factory_with_protected_attributes(Course, course_valid_attributes)
     raw_api_call(:get, "/api/v1/courses/#{@course.id}/activity_stream",
                 :controller => "courses", :action => "activity_stream", :format => "json", :course_id => @course.to_param)
-    response.status.should == '401 Unauthorized'
+    assert_status(401)
   end
 
   it "should return the activity stream" do
     json = api_call(:get, "/api/v1/users/activity_stream.json",
                     { :controller => "users", :action => "activity_stream", :format => 'json' })
-    json.size.should == 0
+    expect(json.size).to eq 0
     google_docs_collaboration_model(:user_id => @user.id)
     @context = @course
     @topic1 = discussion_topic_model
@@ -47,7 +47,7 @@ describe UsersController, :type => :integration do
     StreamItem.where(:id => @user.visible_stream_item_instances.last.stream_item_id).delete_all
     json = api_call(:get, "/api/v1/users/activity_stream.json",
                     { :controller => "users", :action => "activity_stream", :format => 'json' })
-    json.size.should == 1
+    expect(json.size).to eq 1
   end
 
   it "should return the activity stream summary" do
@@ -61,7 +61,7 @@ describe UsersController, :type => :integration do
     @assignment.update_attribute(:due_at, 1.week.from_now)
     json = api_call(:get, "/api/v1/users/self/activity_stream/summary.json",
                     { :controller => "users", :action => "activity_stream_summary", :format => 'json' })
-    json.should == [{"type" => "Conversation", "count" => 1, "unread_count" => 0, "notification_category" => nil}, # conversations don't currently set the unread state on stream items
+    expect(json).to eq [{"type" => "Conversation", "count" => 1, "unread_count" => 0, "notification_category" => nil}, # conversations don't currently set the unread state on stream items
                     {"type" => "DiscussionTopic", "count" => 2, "unread_count" => 1, "notification_category" => nil},
                     {"type" => "Message", "count" => 1, "unread_count" => 0, "notification_category" => "TestImmediately"} # check a broadcast-policy-based one
                    ]
@@ -75,7 +75,7 @@ describe UsersController, :type => :integration do
     @topic.reply_from(:user => @user, :text => 'hai')
     json = api_call(:get, "/api/v1/users/activity_stream.json",
                     { :controller => "users", :action => "activity_stream", :format => 'json' })
-    json.should == [{
+    expect(json).to eq [{
       'id' => StreamItem.last.id,
       'discussion_topic_id' => @topic.id,
       'title' => "value for title",
@@ -100,35 +100,6 @@ describe UsersController, :type => :integration do
     }]
   end
 
-  it "should format DiscussionTopic for a CollectionItem" do
-    @item = collection_item_model
-    @item.discussion_topic.save!
-    @item.discussion_topic.discussion_subentries.create!(:message => "test", :user => @user, :discussion_topic => @item.discussion_topic)
-    json = api_call(:get, "/api/v1/users/activity_stream.json",
-                    { :controller => "users", :action => "activity_stream", :format => 'json' })
-    json.should == [{
-      'id' => StreamItem.last.id,
-      'title' => "No Title",
-      'message' => nil,
-      'type' => 'DiscussionTopic',
-      'read_state' => StreamItemInstance.last.read?,
-      'context_type' => "CollectionItem",
-      'created_at' => StreamItem.last.created_at.as_json,
-      'updated_at' => StreamItem.last.updated_at.as_json,
-      'require_initial_post' => nil,
-      'user_has_posted' => nil,
-
-      'total_root_discussion_entries' => 1,
-      'root_discussion_entries' => [
-        {
-          'user' => { 'user_id' => @user.id, 'user_name' => 'User' },
-          'message' => 'test',
-        },
-      ],
-      'collection_item_id' => @item.id,
-    }]
-  end
-
   it "should not return discussion entries if user has not posted" do
     @context = @course
     course_with_teacher(:course => @context, :active_all => true)
@@ -139,9 +110,9 @@ describe UsersController, :type => :integration do
     @topic.reply_from(:user => @teacher, :text => 'hai')
     json = api_call(:get, "/api/v1/users/activity_stream.json",
                     { :controller => "users", :action => "activity_stream", :format => 'json' })
-    json.first['require_initial_post'].should == true
-    json.first['user_has_posted'].should == false
-    json.first['root_discussion_entries'].should == []
+    expect(json.first['require_initial_post']).to eq true
+    expect(json.first['user_has_posted']).to eq false
+    expect(json.first['root_discussion_entries']).to eq []
   end
 
   it "should return discussion entries to admin without posting " do
@@ -153,9 +124,9 @@ describe UsersController, :type => :integration do
     @topic.reply_from(:user => @student, :text => 'hai')
     json = api_call(:get, "/api/v1/users/activity_stream.json",
                     { :controller => "users", :action => "activity_stream", :format => 'json' })
-    json.first['require_initial_post'].should == true
-    json.first['user_has_posted'].should == true
-    json.first['root_discussion_entries'].should == [
+    expect(json.first['require_initial_post']).to eq true
+    expect(json.first['user_has_posted']).to eq true
+    expect(json.first['root_discussion_entries']).to eq [
             {
               'user' => { 'user_id' => @student.id, 'user_name' => 'User' },
               'message' => 'hai',
@@ -190,7 +161,7 @@ describe UsersController, :type => :integration do
     @a.reply_from(:user => @user, :text => 'hai')
     json = api_call(:get, "/api/v1/users/activity_stream.json",
                     { :controller => "users", :action => "activity_stream", :format => 'json' })
-    json.should == [{
+    expect(json).to eq [{
       'id' => StreamItem.last.id,
       'announcement_id' => @a.id,
       'title' => "value for title",
@@ -243,7 +214,7 @@ describe UsersController, :type => :integration do
     @message = @conversation.conversation_messages.last
     json = api_call(:get, "/api/v1/users/activity_stream.json",
                     { :controller => "users", :action => "activity_stream", :format => 'json' }).first
-    json.should == {
+    expect(json).to eq({
       'id' => StreamItem.last.id,
       'conversation_id' => @conversation.id,
       'type' => 'Conversation',
@@ -257,14 +228,14 @@ describe UsersController, :type => :integration do
       'html_url' => "http://www.example.com/conversations/#{@conversation.id}",
 
       'participant_count' => 2
-    }
+    })
   end
 
   it "should format Message" do
     message_model(:user => @user, :to => 'dashboard', :notification => notification_model)
     json = api_call(:get, "/api/v1/users/activity_stream.json",
                     { :controller => "users", :action => "activity_stream", :format => 'json' })
-    json.should == [{
+    expect(json).to eq [{
       'id' => StreamItem.last.id,
       'message_id' => @message.id,
       'title' => "value for subject",
@@ -297,9 +268,12 @@ describe UsersController, :type => :integration do
     @assignment.reload
     assign_json = assignment_json(@assignment, @user, session,
                                   include_discussion_topic: false)
+    assign_json['created_at'] = @assignment.created_at.as_json
+    assign_json['updated_at'] = @assignment.updated_at.as_json
     assign_json['title'] = @assignment.title
-    json.should == [{
+    expect(json).to eq [{
       'id' => StreamItem.last.id,
+      'submission_id' => @sub.id,
       'title' => "assignment 1",
       'message' => nil,
       'type' => 'Submission',
@@ -331,7 +305,7 @@ describe UsersController, :type => :integration do
           'id' => @teacher.id,
           'display_name' => 'teacher',
           'html_url' => "http://www.example.com/courses/#{@course.id}/users/#{@teacher.id}",
-          'avatar_image_url' => 'http://www.example.com/images/messages/avatar-50.png'
+          'avatar_image_url' => User.avatar_fallback_url
         },
         'author_name' => 'teacher',
         'author_id' => @teacher.id,
@@ -345,7 +319,7 @@ describe UsersController, :type => :integration do
           'id' => @user.id,
           'display_name' => 'User',
           'html_url' => "http://www.example.com/courses/#{@course.id}/users/#{@user.id}",
-          'avatar_image_url' => 'http://www.example.com/images/messages/avatar-50.png'
+          'avatar_image_url' => User.avatar_fallback_url
         },
         'author_name' => 'User',
         'author_id' => @user.id,
@@ -357,6 +331,7 @@ describe UsersController, :type => :integration do
         'name' => @course.name,
         'end_at' => @course.end_at,
         'account_id' => @course.account_id,
+        'enrollment_term_id' => @course.enrollment_term_id,
         'start_at' => @course.start_at.as_json,
         'id' => @course.id,
         'course_code' => @course.course_code,
@@ -366,6 +341,8 @@ describe UsersController, :type => :integration do
         'default_view' => 'feed',
         'workflow_state' => 'available',
         'public_syllabus' => false,
+        'is_public' => @course.is_public,
+        'is_public_to_auth_users' => @course.is_public_to_auth_users,
         'storage_quota_mb' => @course.storage_quota_mb,
         'apply_assignment_group_weights' => false
       },
@@ -378,7 +355,7 @@ describe UsersController, :type => :integration do
       'course_id' => @course.id,
     }]
   end
-  
+
   it "should format ungraded Submission with comments" do
     #set @domain_root_account
     @domain_root_account = Account.default
@@ -396,9 +373,12 @@ describe UsersController, :type => :integration do
     @assignment.reload
     assign_json = assignment_json(@assignment, @user, session,
                                   include_discussion_topic: false)
+    assign_json['created_at'] = @assignment.created_at.as_json
+    assign_json['updated_at'] = @assignment.updated_at.as_json
     assign_json['title'] = @assignment.title
-    json.should == [{
+    expect(json).to eq [{
       'id' => StreamItem.last.id,
+      'submission_id' => @sub.id,
       'title' => "assignment 1",
       'message' => nil,
       'type' => 'Submission',
@@ -431,7 +411,7 @@ describe UsersController, :type => :integration do
           'id' => @teacher.id,
           'display_name' => 'teacher',
           'html_url' => "http://www.example.com/courses/#{@course.id}/users/#{@teacher.id}",
-          'avatar_image_url' => 'http://www.example.com/images/messages/avatar-50.png'
+          'avatar_image_url' => User.avatar_fallback_url
         },
         'author_name' => 'teacher',
         'author_id' => @teacher.id,
@@ -445,7 +425,7 @@ describe UsersController, :type => :integration do
           'id' => @user.id,
           'display_name' => 'User',
           'html_url' => "http://www.example.com/courses/#{@course.id}/users/#{@user.id}",
-          'avatar_image_url' => 'http://www.example.com/images/messages/avatar-50.png'
+          'avatar_image_url' => User.avatar_fallback_url
         },
         'author_name' => 'User',
         'author_id' => @user.id,
@@ -457,6 +437,7 @@ describe UsersController, :type => :integration do
         'name' => @course.name,
         'end_at' => @course.end_at,
         'account_id' => @course.account_id,
+        'enrollment_term_id' => @course.enrollment_term_id,
         'start_at' => @course.start_at.as_json,
         'id' => @course.id,
         'course_code' => @course.course_code,
@@ -466,6 +447,8 @@ describe UsersController, :type => :integration do
         'default_view' => 'feed',
         'workflow_state' => 'available',
         'public_syllabus' => false,
+        'is_public' => @course.is_public,
+        'is_public_to_auth_users' => @course.is_public_to_auth_users,
         'storage_quota_mb' => @course.storage_quota_mb,
         'apply_assignment_group_weights' => false
       },
@@ -489,10 +472,10 @@ describe UsersController, :type => :integration do
     json = api_call(:get, "/api/v1/users/activity_stream.json",
                     { :controller => "users", :action => "activity_stream", :format => 'json' })
 
-    json[0]['grade'].should == '12'
-    json[0]['score'].should == 12
-    json[0]['workflow_state'].should == 'graded'
-    json[0]['submission_comments'].should == []
+    expect(json[0]['grade']).to eq '12'
+    expect(json[0]['score']).to eq 12
+    expect(json[0]['workflow_state']).to eq 'graded'
+    expect(json[0]['submission_comments']).to eq []
   end
 
   it "should not format ungraded Submission without comments" do
@@ -504,14 +487,14 @@ describe UsersController, :type => :integration do
     @sub.save!
     json = api_call(:get, "/api/v1/users/activity_stream.json",
                     { :controller => "users", :action => "activity_stream", :format => 'json' })
-    json.should == []
+    expect(json).to eq []
   end
 
   it "should format Collaboration" do
     google_docs_collaboration_model(:user_id => @user.id, :title => 'hey')
     json = api_call(:get, "/api/v1/users/activity_stream.json",
                     { :controller => "users", :action => "activity_stream", :format => 'json' })
-    json.should == [{
+    expect(json).to eq [{
       'id' => StreamItem.last.id,
       'collaboration_id' => @collaboration.id,
       'title' => "hey",
@@ -533,7 +516,7 @@ describe UsersController, :type => :integration do
     @conference = BigBlueButtonConference.create!(:title => 'myconf', :user => @user, :description => 'mydesc', :conference_type => 'big_blue_button', :context => @course)
     json = api_call(:get, "/api/v1/users/activity_stream.json",
                     { :controller => "users", :action => "activity_stream", :format => 'json' })
-    json.should == [{
+    expect(json).to eq [{
       'id' => StreamItem.last.id,
       'web_conference_id' => @conference.id,
       'title' => "myconf",
@@ -548,50 +531,28 @@ describe UsersController, :type => :integration do
     }]
   end
 
-  it "should format CollectionItem" do
-    @user1 = @user
-    group_with_user
-    @user2 = @user
-    @user = @user1
-    @coll = @group.collections.create!
-    UserFollow.create_follow(@user1, @coll)
-    @item = collection_item_model(:collection => @coll, :user => @user2)
+  it "should format AssessmentRequest" do
+    assignment = assignment_model(:course => @course)
+    submission = submission_model(assignment: assignment, user: @student)
+    assessor_submission = submission_model(assignment: assignment, user: @user)
+    assessment_request = AssessmentRequest.create!(assessor: @user, asset: submission,
+                                                    user: @student, assessor_asset: assessor_submission)
+    assessment_request.workflow_state = 'assigned'
+    assessment_request.save
 
     json = api_call(:get, "/api/v1/users/activity_stream.json",
                     { :controller => "users", :action => "activity_stream", :format => 'json' })
-    json.should == [{
-      'id' => StreamItem.last.id,
-      'title' => @item.data.title,
-      'type' => 'CollectionItem',
-      'read_state' => StreamItemInstance.last.read?,
-      'message' => @item.data.description,
-      'created_at' => StreamItem.last.created_at.as_json,
-      'updated_at' => StreamItem.last.updated_at.as_json,
-      'collection_item' => {
-        'id' => @item.id,
-        'collection_id' => @item.collection_id,
-        'user' => {
-          'id' => @item.user.id,
-          'display_name' => @item.user.short_name,
-          'avatar_image_url' => "http://www.example.com/images/messages/avatar-50.png",
-          'html_url' => (@item.user == @user) ? "http://www.example.com/profile" : "http://www.example.com/users/#{@item.user.id}",
-        },
-        'item_type' => @item.collection_item_data.item_type,
-        'link_url' => @item.collection_item_data.link_url,
-        'post_count' => @item.collection_item_data.post_count,
-        'upvote_count' => @item.collection_item_data.upvote_count,
-        'upvoted_by_user' => false,
-        'root_item_id' => @item.collection_item_data.root_item_id,
-        'image_url' => "http://www.example.com/images/thumbnails/#{@item.data.image_attachment.id}/#{@item.data.image_attachment.uuid}?size=640x%3E",
-        'image_pending' => @item.data.image_pending,
-        'html_preview' => @item.data.html_preview,
-        'user_comment' => @item.user_comment,
-        'url' => "http://www.example.com/api/v1/collections/items/#{@item.id}",
-        'created_at' => @item.created_at.iso8601,
-        'description' => @item.data.description,
-        'title' => @item.data.title,
-      }
-    }]
+
+    expect(json[0]['id']).to eq StreamItem.last.id
+    expect(json[0]['title']).to eq "Peer Review for #{assignment.title}"
+    expect(json[0]['type']).to eq 'AssessmentRequest'
+    expect(json[0]['message']).to eq nil
+    expect(json[0]['context_type']).to eq 'Course'
+    expect(json[0]['course_id']).to eq @course.id
+    expect(json[0]['assessment_request_id']).to eq assessment_request.id
+    expect(json[0]['html_url']).to eq "http://www.example.com/courses/#{@course.id}/assignments/#{assignment.id}/submissions/#{assessment_request.user_id}"
+    expect(json[0]['created_at']).to eq StreamItem.last.created_at.as_json
+    expect(json[0]['updated_at']).to eq StreamItem.last.updated_at.as_json
   end
 
   it "should return the course-specific activity stream" do
@@ -603,19 +564,19 @@ describe UsersController, :type => :integration do
     @topic2 = discussion_topic_model
     json = api_call(:get, "/api/v1/users/activity_stream.json",
                     { :controller => "users", :action => "activity_stream", :format => 'json' })
-    json.size.should == 2
-    response.headers['Link'].should be_present
+    expect(json.size).to eq 2
+    expect(response.headers['Link']).to be_present
 
     json = api_call(:get, "/api/v1/users/activity_stream.json?per_page=1",
                     { :controller => "users", :action => "activity_stream", :format => 'json', :per_page => '1' })
-    json.size.should == 1
-    response.headers['Link'].should be_present
+    expect(json.size).to eq 1
+    expect(response.headers['Link']).to be_present
 
     json = api_call(:get, "/api/v1/courses/#{@course2.id}/activity_stream.json",
                     { :controller => "courses", :action => "activity_stream", :course_id => @course2.to_param, :format => 'json' })
-    json.size.should == 1
-    json.first['discussion_topic_id'].should == @topic2.id
-    response.headers['Link'].should be_present
+    expect(json.size).to eq 1
+    expect(json.first['discussion_topic_id']).to eq @topic2.id
+    expect(response.headers['Link']).to be_present
   end
 
   it "should return the group-specific activity stream" do
@@ -631,46 +592,42 @@ describe UsersController, :type => :integration do
 
     json = api_call(:get, "/api/v1/users/activity_stream.json",
                     { :controller => "users", :action => "activity_stream", :format => 'json' })
-    json.size.should == 2
-    response.headers['Link'].should be_present
+    expect(json.size).to eq 2
+    expect(response.headers['Link']).to be_present
 
     json = api_call(:get, "/api/v1/groups/#{@group1.id}/activity_stream.json",
                     { :controller => "groups", :action => "activity_stream", :group_id => @group1.to_param, :format => 'json' })
-    json.size.should == 1
-    json.first['discussion_topic_id'].should == @topic1.id
-    response.headers['Link'].should be_present
+    expect(json.size).to eq 1
+    expect(json.first['discussion_topic_id']).to eq @topic1.id
+    expect(response.headers['Link']).to be_present
   end
 
   context "stream items" do
     it "should hide the specified stream_item" do
-      item = collection_item_model
-      item.discussion_topic.save!
-      item.discussion_topic.discussion_subentries.create!(:message => "test", :user => @user, :discussion_topic => item.discussion_topic)
-      @user.stream_item_instances.where(:hidden => false).count.should == 1
+      discussion_topic_model
+      expect(@user.stream_item_instances.where(:hidden => false).count).to eq 1
 
       json = api_call(:delete, "/api/v1/users/self/activity_stream/#{StreamItem.last.id}",
                       {:action => "ignore_stream_item", :controller => "users", :format => 'json', :id => StreamItem.last.id.to_param})
 
-      @user.stream_item_instances.where(:hidden => false).count.should == 0
-      @user.stream_item_instances.where(:hidden => true).count.should == 1
-      json.should == {'hidden' => true}
+      expect(@user.stream_item_instances.where(:hidden => false).count).to eq 0
+      expect(@user.stream_item_instances.where(:hidden => true).count).to eq 1
+      expect(json).to eq({'hidden' => true})
     end
 
     it "should hide all of the stream items" do
       3.times do |n|
-        collection = @user.collections.create! :name => 'Test #{n}'
-        item = collection_item_model(:collection => collection)
-        item.discussion_topic.save!
-        item.discussion_topic.discussion_subentries.create!(:message => "test", :user => @user, :discussion_topic => item.discussion_topic)
+        dt = discussion_topic_model title: "Test #{n}"
+        dt.discussion_subentries.create! :message => "test", :user => @user
       end
-      @user.stream_item_instances.where(:hidden => false).count.should == 3
+      expect(@user.stream_item_instances.where(:hidden => false).count).to eq 3
 
       json = api_call(:delete, "/api/v1/users/self/activity_stream",
                       {:action => "ignore_all_stream_items", :controller => "users", :format => 'json'})
 
-      @user.stream_item_instances.where(:hidden => false).count.should == 0
-      @user.stream_item_instances.where(:hidden => true).count.should == 3
-      json.should == {'hidden' => true}
+      expect(@user.stream_item_instances.where(:hidden => false).count).to eq 0
+      expect(@user.stream_item_instances.where(:hidden => true).count).to eq 3
+      expect(json).to eq({'hidden' => true})
     end
   end
 end

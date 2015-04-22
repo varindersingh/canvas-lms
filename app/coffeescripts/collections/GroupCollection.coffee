@@ -18,9 +18,29 @@
 
 define [
   'compiled/collections/PaginatedCollection'
+  'compiled/collections/GroupUserCollection'
   'compiled/models/Group'
-], (PaginatedCollection, Group) ->
+  'compiled/util/natcompare'
+], (PaginatedCollection, GroupUserCollection, Group, natcompare) ->
 
   class GroupCollection extends PaginatedCollection
     model: Group
-    comparator: (group) -> group.get('name').toLowerCase()
+    comparator: natcompare.byGet('name')
+
+    @optionProperty 'category'
+    @optionProperty 'loadAll'
+
+    _defaultUrl: ->
+      if @forCourse
+        url = super
+        unless ENV.CAN_MANAGE_GROUPS
+          url = url + "?only_own_groups=1"
+        url
+      else
+        '/api/v1/users/self/groups'
+
+    url: ->
+      if @category?
+        @url = "/api/v1/group_categories/#{@category.id}/groups?per_page=50"
+      else
+        @url = super

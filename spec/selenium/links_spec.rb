@@ -1,7 +1,7 @@
 require File.expand_path(File.dirname(__FILE__) + '/common')
 
-describe "links" do
-  it_should_behave_like "in-process server selenium tests"
+describe "links", :priority => "2" do
+  include_examples "in-process server selenium tests"
 
   before (:each) do
     course_with_teacher_logged_in
@@ -19,8 +19,8 @@ describe "links" do
     end
 
     it "should navigate user to home page after home link is clicked" do
-      expect_new_page_load { driver.find_element(:link, 'Home').click }
-      f("#course_home_content").should be_displayed
+      expect_new_page_load { fln('Home').click }
+			expect(f("#course_home_content")).to be_displayed
     end
 
     it "should navigate user to announcements page after announcements link is clicked" do
@@ -40,7 +40,7 @@ describe "links" do
 
     it "should navigate user to gradebook page after grades link is clicked" do
       link = find_link('.grades')
-      validate_breadcrumb_link(link, 'Gradebook')
+      validate_breadcrumb_link(link, 'Grades')
     end
 
     it "should navigate user to users page after people link is clicked" do
@@ -112,19 +112,16 @@ describe "links" do
       it "should navigate user to main page after canvas logo link is clicked" do
         f('#header-logo')
         expect_new_page_load { f('#header-logo').click }
-        driver.current_url.should == f('#header-logo').attribute('href')
-      end
-
-      it "should navigate user to assignments page after assignments link is clicked" do
-        validate_breadcrumb_link(f('#assignments_menu_item a'), 'Assignments')
+        expect(driver.current_url).to eq f('#header-logo').attribute('href')
       end
 
       it "should navigate user to gradebook page after grades link is clicked" do
-        validate_breadcrumb_link(f('#grades_menu_item a'), 'Gradebook')
+        validate_breadcrumb_link(f('#grades_menu_item a'), 'Grades')
       end
 
       it "should navigate user to the calendar page after calender link is clicked" do
-        validate_breadcrumb_link(f('#calendar_menu_item a'), 'My Calendar')
+        expect_new_page_load { fln('Calendar').click }
+        expect(f('.calendar_header')).to be_displayed
       end
     end
   end

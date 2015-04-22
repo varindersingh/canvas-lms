@@ -42,6 +42,15 @@ $.extend( proto, {
 			var textInput = $( event.target ).find( "a.ui-state-focus" ).children( "input[type='text']" );
 			if ( textInput.length )
 				textInput[0].focus();
+		});
+		// INSTRUCTURE
+		this.element.bind( "popupopen", function( event ) {
+			var selected = $( event.target ).find( "input[type=radio][checked]" ).closest('.ui-menu-item');
+			if (selected.length) {
+				setTimeout(function() {
+					that.focus( event, selected );
+				}, 0);
+			}
 		})
 		.bind( "menublur", function( event ) {
 			var textInput = $( event.target ).find( "input[type='text']:focus" );
@@ -87,7 +96,7 @@ $.extend( proto, {
 				if( parent.prev().length && !parent.prev().children( "a" ).length ) {
 					parent.prev()
 						.addClass( "ui-state-disabled" )
-						.html( "<span class='ui-menu-input-group'>" + parent.prev().text() + "</span>" )
+						.html( "<span class='ui-menu-input-group'>" + parent.prev().html() + "</span>" )
 						.bind( "click.menu", function( event ) {
 							return false;
 						}).after( "<li><hr /></li>" );

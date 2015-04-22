@@ -6,16 +6,13 @@ environment_configuration(defined?(config) && config) do |config|
   # since you don't have to restart the webserver when you make code changes.
   config.cache_classes = false
 
-  # Log error messages when you accidentally call methods on nil.
-  config.whiny_nils = true
+  if CANVAS_RAILS3
+    # Log error messages when you accidentally call methods on nil.
+    config.whiny_nils = true
+  end
 
   # Show full error reports and disable caching
-  if Rails.version < "3.0"
-    config.action_controller.consider_all_requests_local = true
-  else
-    config.consider_all_requests_local = true
-  end
-  config.action_view.debug_rjs             = true
+  config.consider_all_requests_local = true
   config.action_controller.perform_caching = false
 
   # run rake js:build to build the optimized JS if set to true
@@ -24,41 +21,38 @@ environment_configuration(defined?(config) && config) do |config|
   # Really do care if the message wasn't sent.
   config.action_mailer.raise_delivery_errors = true
 
-  # initialize cache store
-  # this needs to happen in each environment config file, rather than a
-  # config/initializer/* file, to allow Rails' full initialization of the cache
-  # to take place, including middleware inserts and such.
-  require_dependency 'canvas'
-  config.cache_store = Canvas.cache_store_config
+  # initialize cache store. has to eval, not just require, so that it has
+  # access to config.
+  cache_store_rb = File.dirname(__FILE__) + "/cache_store.rb"
+  eval(File.new(cache_store_rb).read, nil, cache_store_rb, 1)
 
   # eval <env>-local.rb if it exists
-  Dir[File.dirname(__FILE__) + "/" + File.basename(__FILE__, ".rb") + "-*.rb"].each { |localfile| eval(File.new(localfile).read) }
+  Dir[File.dirname(__FILE__) + "/" + File.basename(__FILE__, ".rb") + "-*.rb"].each { |localfile| eval(File.new(localfile).read, nil, localfile, 1) }
 
   # allow debugging only in development environment by default
-  # ruby-debug is currently broken in 1.9.3
   #
   # Option to DISABLE_RUBY_DEBUGGING is helpful IDE-based debugging.
   # The ruby debug gems conflict with the IDE-based debugger gem.
   # Set this option in your dev environment to disable.
   unless ENV['DISABLE_RUBY_DEBUGGING']
-    require "debugger"
+    if RUBY_VERSION >= '2.0.0'
+      require 'byebug'
+    else
+      require "debugger"
+    end
   end
 
-  if Rails.version < "3.0"
-    config.to_prepare do
-      # Raise an exception on bad mass assignment. Helps us catch these bugs before
-      # they hit.
-      Canvas.protected_attribute_error = :raise
+  # Print deprecation notices to the Rails logger
+  config.active_support.deprecation = :log
 
-      # Raise an exception on finder type mismatch or nil arguments. Helps us catch
-      # these bugs before they hit.
-      Canvas.dynamic_finder_nil_arguments_error = :raise
-    end
-  else
-    # Print deprecation notices to the Rails logger
-    config.active_support.deprecation = :log
+  # Only use best-standards-support built into browsers
+  config.action_dispatch.best_standards_support = :builtin
 
-    # Only use best-standards-support built into browsers
-    config.action_dispatch.best_standards_support = :builtin
+  # we use lots of db specific stuff - don't bother trying to dump to ruby
+  # (it also takes forever)
+  config.active_record.schema_format = :sql
+
+  unless CANVAS_RAILS3
+    config.eager_load = false
   end
 end

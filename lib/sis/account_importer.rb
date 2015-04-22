@@ -16,19 +16,21 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
-require "skip_callback"
-
 module SIS
   class AccountImporter < BaseImporter
 
     def process
       start = Time.now
-      importer = Work.new(@batch_id, @root_account, @logger)
-      Account.skip_callback(:update_account_associations_if_changed) do
+      importer = Work.new(@batch, @root_account, @logger)
+      Account.suspend_callbacks(:update_account_associations_if_changed) do
         Account.process_as_sis(@sis_options) do
           yield importer
         end
       end
+      importer.accounts_to_set_sis_batch_ids.to_a.in_groups_of(1000, false) do |batch|
+        Account.where(:id => batch).update_all(:sis_batch_id => @batch)
+      end if @batch
+
       @logger.debug("Accounts took #{Time.now - start} seconds")
       return importer.success_count
     end
@@ -36,17 +38,18 @@ module SIS
   private
 
     class Work
-      attr_accessor :success_count
+      attr_reader :success_count, :accounts_to_set_sis_batch_ids
 
-      def initialize(batch_id, root_account, logger)
-        @batch_id = batch_id
+      def initialize(batch, root_account, logger)
+        @batch = batch
         @root_account = root_account
         @accounts_cache = {}
         @logger = logger
         @success_count = 0
+        @accounts_to_set_sis_batch_ids = Set.new
       end
 
-      def add_account(account_id, parent_account_id, status, name)
+      def add_account(account_id, parent_account_id, status, name, integration_id)
         @logger.debug("Processing Account #{[account_id, parent_account_id, status, name].inspect}")
 
         raise ImportError, "No account_id given for an account" if account_id.blank?
@@ -54,12 +57,13 @@ module SIS
         parent = nil
         if !parent_account_id.blank?
           parent = @accounts_cache[parent_account_id]
-          parent ||= Account.find_by_root_account_id_and_sis_source_id(@root_account.id, parent_account_id)
+          parent ||= @root_account.all_accounts.where(sis_source_id: parent_account_id).first
           raise ImportError, "Parent account didn't exist for #{account_id}" unless parent
           @accounts_cache[parent.sis_source_id] = parent
         end
 
-        account = Account.find_by_root_account_id_and_sis_source_id(@root_account.id, account_id)
+        account = @accounts_cache[account_id]
+        account ||= @root_account.all_accounts.where(sis_source_id: account_id).first
         if account.nil?
           raise ImportError, "No name given for account #{account_id}, skipping" if name.blank?
           raise ImportError, "Improper status \"#{status}\" for account #{account_id}, skipping" unless status =~ /\A(active|deleted)/i
@@ -73,8 +77,8 @@ module SIS
         # only update the name on new records, and ones that haven't been changed since the last sis import
         account.name = name if name.present? && (account.new_record? || (!account.stuck_sis_fields.include?(:name)))
 
+        account.integration_id = integration_id
         account.sis_source_id = account_id
-        account.sis_batch_id = @batch_id if @batch_id
 
         if status.present?
           if status =~ /active/i
@@ -84,10 +88,19 @@ module SIS
           end
         end
 
+        @accounts_cache[account.sis_source_id] = account
+
+        unless account.changed?
+          @success_count += 1
+          self.accounts_to_set_sis_batch_ids << account.id unless account.sis_batch_id == @batch.try(:id)
+          return
+        end
+
+        account.sis_batch_id = @batch.id if @batch
+
         update_account_associations = account.root_account_id_changed? || account.parent_account_id_changed?
         if account.save
           account.update_account_associations if update_account_associations
-          @accounts_cache[account.sis_source_id] = account
 
           @success_count += 1
         else

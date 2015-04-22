@@ -42,11 +42,14 @@ module CC
           rubric = assoc.rubric
           next if rubric.nil? || !rubric.active? || imported_rubrics[rubric.id]
           if !export_object?(rubric)
-            if assoc.association_type != "Assignment" || !export_object?(assoc.association)
+            if assoc.association_type != "Assignment" || !export_object?(assoc.association_object)
               next
             end
           end
           imported_rubrics[rubric.id] = true
+          rubric.learning_outcome_alignments.each do |align|
+            add_item_to_export(align.learning_outcome, 'learning_outcomes')
+          end
 
           migration_id = CCHelper.create_key(rubric)
           rubrics_node.rubric(:identifier=>migration_id) do |r_node|

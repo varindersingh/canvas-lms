@@ -1,3 +1,27 @@
+{{#if title}}
+  <h1 class="screenreader-only" style="display: inline">{{title}}</h1>
+{{else}}
+  <h1 class="screenreader-only" style="display: inline">{{#t "page_header_title"}}New Discussion{{/t}}</h1>
+{{/if}}
+
+{{#unless isAnnouncement}}
+  <div class="discussion-edit-header row-fluid">
+    <div class="span4 offset8 text-right">
+      {{#if published}}
+        <span id="topic-draft-state" class="published-status published">
+          <i class="icon-publish"></i>
+          {{#t "buttons.published"}}Published{{/t}}
+        </span>
+      {{else}}
+        <span id="topic-draft-state" class="published-status unpublished">
+          <i class="icon-unpublished"></i>
+          {{#t "buttons.not_published"}}Not Published{{/t}}
+        </span>
+      {{/if}}
+    </div>
+  </div>
+{{/unless}}
+
 <fieldset>
   <div class="control-group">
     <label class="hidden-inline-text" for="discussion-title">{{#t "topic_title"}}Topic Title{{/t}}</label>
@@ -11,7 +35,12 @@
   </div>
   <div class="control-group">
       <div style="float: right;">
-        <a href="#" class="rte_switch_views_link">{{#t "#editor.switch_views"}}Switch Views{{/t}}</a>
+        <a href="#" class="rte_switch_views_link">
+          {{#t "#editor.switch_editor_html"}}HTML Editor{{/t}}
+        </a>
+        <a href="#" class="rte_switch_views_link" style="display:none;">
+          {{#t "#editor.switch_editor_rich_text"}}Rich Content Editor{{/t}}
+        </a>
       </div>
       <div style="clear:both;"></div>
       <textarea name="message"
@@ -24,18 +53,18 @@
 <fieldset>
 
   <div class="control-group">
-    <label class="control-label" for="attachment_uploaded_data">{{#t "attachment"}}Attachment{{/t}}</label>
+    <label class="control-label" role="button" aria-label="{{#t}}Add Attachment{{/t}}" tabindex="0" for="discussion_attachment_uploaded_data">{{#t "attachment"}}Attachment{{/t}}</label>
     <div class="controls">
       {{#each attachments}}
         <div class="attachmentRow">
           <a href="{{url}}" class="{{mimeClass content-type}}">{{display_name}}</a>
-          <button type="button" class="removeAttachment close" style="float:none">×</button>
+          <button type="button" class="removeAttachment close" style="float:none" aria-label="{{#t}}Remove Attachment{{/t}}">×</button>
         </div>
       {{/each}}
       <input type="file"
              name="attachment"
              {{#if attachments}}style="display:none"{{/if}}
-             id="attachment_uploaded_data" >
+             id="discussion_attachment_uploaded_data" >
     </div>
   </div>
 
@@ -48,14 +77,14 @@
     <label class="control-label">{{#t "options"}}Options{{/t}}</label>
     <div class="controls">
       {{#if isTopic}}
-        <label class="checkbox">
+        <label class="checkbox" for="threaded">
           {{checkbox "threaded"}}
           {{#t "allow_threaded_replies"}}Allow threaded replies{{/t}}
         </label>
       {{/if}}
       {{#if contextIsCourse}}
         {{#if isAnnouncement}}
-          <label class="checkbox">
+          <label class="checkbox" for="delay_posting">
             {{checkbox "delay_posting"
               checked=delayed_post_at
               class="element_toggler"
@@ -70,32 +99,34 @@
                    class="datetime_field input-medium"
                    name="delayed_post_at"
                    {{! TODO: what would be the best way to get this formatted right? }}
-                   value="{{datetimeFormatted delayed_post_at}}">
+                   value="{{datetimeFormatted delayed_post_at false}}">
           </label>
         {{/if}}
-        <label class="checkbox">
+        <label class="checkbox" for="require_initial_post">
           {{checkbox "require_initial_post"}}
           {{#t "users_must_post_before_seeing_replies"}}Users must post before seeing replies{{/t}}
         </label>
       {{/if}}
       {{#if canModerate}}
-        <label class="checkbox">
+        <label class="checkbox" for="podcast_enabled">
           {{checkbox "podcast_enabled"
             checked=podcast_url
             class="element_toggler"
             aria-controls="podcast_has_student_posts_container"}}
           {{#t "enable_podcast_feed"}}Enable podcast feed{{/t}}
         </label>
-  
-        <label id="podcast_has_student_posts_container"
-               style="{{hiddenUnless podcast_url}}"
-               class="checkbox">
-          {{checkbox "podcast_has_student_posts"}}
-          {{#t "include_replies_in_podcast_feed"}}Include Replies in podcast feed{{/t}}
-        </label>
+
+        {{#if contextIsCourse}}
+          <label id="podcast_has_student_posts_container"
+                 style="{{hiddenUnless podcast_url}}"
+                 class="checkbox" for="podcast_has_student_posts">
+            {{checkbox "podcast_has_student_posts"}}
+            {{#t "include_replies_in_podcast_feed"}}Include student replies in podcast feed{{/t}}
+          </label>
+        {{/if}}
       {{/if}}
       {{#if showAssignment}}
-        <label class="checkbox">
+        <label class="checkbox" for="use_for_grading">
           {{checkbox "assignment.set_assignment"
             id="use_for_grading"
             class="element_toggler"
@@ -111,6 +142,12 @@
 </fieldset>
 
 {{#if isTopic}}
+  {{#unless isLargeRoster}}
+    {{#if contextIsCourse}}
+      <div id="group_category_options" class="control-group"></div>
+    {{/if}}
+  {{/unless}}
+
   {{#if contextIsCourse}}
     <div id="availability_options" style="{{hiddenIf set_assignment}}">
       <fieldset>
@@ -120,8 +157,10 @@
             <input type="text"
                    class="datetime_field input-medium"
                    name="delayed_post_at"
+                   id="delayed_post_at"
+                   aria-label="{{#t}}Available From Date{{/t}}"
                    {{! TODO: what would be the best way to get this formatted right? }}
-                   value="{{datetimeFormatted delayed_post_at}}">
+                   value="{{datetimeFormatted delayed_post_at false}}">
           </div>
         </div>
       </fieldset>
@@ -134,8 +173,10 @@
               <input type="text"
                      class="datetime_field input-medium"
                      name="lock_at"
+                     id="lock_at"
+                     aria-label="{{#t}}Available Until Date{{/t}}"
                      {{! TODO: what would be the best way to get this formatted right? }}
-                     value="{{datetimeFormatted lock_at}}">
+                     value="{{datetimeFormatted lock_at false}}">
             </div>
           </div>
         </fieldset>
@@ -150,26 +191,39 @@
       <div class="control-group">
         <label class="control-label" for="discussion_topic_assignment_points_possible">{{#t "points_possible"}}Points Possible{{/t}}</label>
         <div class="controls">
-          <input type="number"
+          <input type="text"
                  id="discussion_topic_assignment_points_possible"
                  name="assignment[points_possible]"
                  class="input-small"
                  value="{{assignment.pointsPossible}}" />
         </div>
+          <div id=discussion_point_change_warning class="alert form-column-right">
+              {{#t}}If you change an assignment's points possible you must regrade the assignment.{{/t}}
+          </div>
       </div>
 
       <div id="grading_type_options" class="control-group"></div>
 
-      <div id="assignment_group_options" class="control-group"></div>
+      <div id="post_to_sis_options" class="control-group"></div>
 
-      {{#unless isLargeRoster}}
-        <div id="group_category_options" class="control-group"></div>
-      {{/unless}}
+      <div id="assignment_group_options" class="control-group"></div>
 
       {{#unless isLargeRoster}}
         <div id="peer_review_options" class="control-group"></div>
       {{/unless}}
     </fieldset>
+
+    <hr>
+
+    {{#if differentiatedAssignmentsEnabled}}
+      <div class="text-center pad-box-mini" style="margin-bottom:10px">
+        <span>
+          <em>
+          {{#t "only_visible_to_overrides_note"}}Note: This discussion is <strong>only</strong> visible to the section(s) specified below:{{/t}}
+          </em>
+        </span>
+      </div>
+    {{/if}}
 
     <div class='js-assignment-overrides'></div>
   </div>
@@ -180,4 +234,3 @@
           data-text-while-loading="{{#t "saving"}}Saving...{{/t}}"
           class="btn btn-primary">{{#t "save"}}Save{{/t}}</button>
 </div>
-

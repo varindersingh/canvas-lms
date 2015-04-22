@@ -23,7 +23,8 @@ define [
   'compiled/util/contextList'
   'compiled/widget/TokenInput'
   'str/htmlEscape'
-], (I18n, $, _, contextList, TokenInput, h) ->
+  'jst/_avatar'
+], (I18n, $, _, contextList, TokenInput, h, avatarTemplate) ->
 
   class ContextSearch extends TokenInput
 
@@ -35,6 +36,7 @@ define [
         populator: @populator
         baseData:
           synthetic_contexts: 1
+          blank_avatar_fallback: false
         browser:
           data:
             types: ['context']
@@ -53,7 +55,11 @@ define [
       data.type ?= 'user'
 
       if data.avatar_url
-        $node.append($('<img />', alt: '', class: 'avatar', src: data.avatar_url))
+        if data.type == 'user'
+          $node.append avatarTemplate data
+        else
+          $node.append $('<div class="avatar-box" />')
+
       $b = $('<b />')
       $b.text(data.name)
       $description = $('<span />', id: "#{data.type}-#{data.id}-description")
@@ -62,7 +68,8 @@ define [
       $name.append($b, $contextInfo)
       $span = $('<span />', class: 'details')
       if data.common_courses?
-        $span.html(@contextList(courses: data.common_courses, groups: data.common_groups))
+        contextListHtml = (@contextList(courses: data.common_courses, groups: data.common_groups))
+        $span.html contextListHtml
       else if data.user_count?
         $span.text(I18n.t('people_count', 'person', {count: data.user_count}))
       else if data.item_count?

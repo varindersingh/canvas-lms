@@ -66,13 +66,23 @@ define([
   };
 
   // useful for i18n, e.g. t('key', 'pick one: %{select}', {select: $.raw('<select><option>...')})
-  // note that raw returns a String object, so you may want to call toString
+  // note that raw returns a SafeString object, so you may want to call toString
   // if you're using it elsewhere
   $.raw = function(str) {
-    str = new String(str);
-    str.htmlSafe = true;
-    return str;
+    return new htmlEscape.SafeString(str);
   }
+  // ensure the jquery html setters don't puke if given a SafeString
+  $.each(["html", "append", "prepend"], function(idx, method) {
+    var orig = $.fn[method];
+    $.fn[method] = function() {
+      var args = [].slice.call(arguments);
+      for (var i = 0, len = args.length; i < len; i++) {
+        if (args[i] instanceof htmlEscape.SafeString)
+          args[i] = args[i].toString();
+      }
+      return orig.apply(this, args);
+    }
+  });
 
   $.replaceOneTag = function(text, name, value) {
     if(!text) { return text; }
@@ -145,11 +155,11 @@ define([
   $.parseUserAgentString = function(userAgent) {
     userAgent = (userAgent || "").toLowerCase();
     var data = {
-      version: (userAgent.match( /.+(?:me|ox|it|ra|ie|er)[\/: ]([\d.]+)/ ) || [0,null])[1],
+      version: (userAgent.match( /.+(?:me|ox|it|ra|ie|er|rv|version)[\/: ]([\d.]+)/ ) || [0,null])[1],
       chrome: /chrome/.test( userAgent ),
       safari: /webkit/.test( userAgent ),
       opera: /opera/.test( userAgent ),
-      msie: /msie/.test( userAgent ) && !(/opera/.test( userAgent )),
+      msie: (/msie/.test( userAgent ) || (/trident/.test( userAgent ))) && !(/opera/.test( userAgent )),
       firefox: /firefox/.test( userAgent),
       mozilla: /mozilla/.test( userAgent ) && !(/(compatible|webkit)/.test( userAgent )),
       speedgrader: /speedgrader/.test( userAgent )
@@ -297,7 +307,7 @@ define([
         event.stopPropagation();
         var now = new Date();
         $dialog.find("button").attr('disabled', true);
-        $dialog.find(".results").empty().append(I18n.t('status.searching', "Searching..."));
+        $dialog.find(".results").empty().append(htmlEscape(I18n.t('status.searching', "Searching...")));
         $dialog.bind('search_results', function(event, data) {
           $dialog.find("button").attr('disabled', false);
           if(data && data.photos && data.photos.photo) {
@@ -317,6 +327,7 @@ define([
                   },
                   'class': "image_link",
                   src: image_url,
+                  tabindex: "0",
                   title: "embed " + (photo.title || ""),
                   alt: photo.title || ""
                 }))
@@ -330,14 +341,27 @@ define([
         // this request will be handled by window.jsonFlickerApi()
         $.getScript("https://secure.flickr.com/services/rest/?method=flickr.photos.search&format=json&api_key=734839aadcaa224c4e043eaf74391e50&per_page=25&license=1,2,3,4,5,6&sort=relevance&text=" + query);
       });
-      $dialog.delegate('.image_link', 'click', function(event) {
-        event.preventDefault();
+
+      var insertImage = function(image){
         $dialog.dialog('close');
         callback({
-          image_url: $(this).data('big_image_url') || $(this).attr('src'),
-          link_url: $(this).data('source'),
-          title: $(this).attr('alt')
+          image_url: $(image).data('big_image_url') || $(image).attr('src'),
+          link_url: $(image).data('source'),
+          title: $(image).attr('alt')
         });
+      }
+
+      $dialog.delegate('.image_link', 'click', function(event) {
+        event.preventDefault();
+        insertImage(this);
+      });
+
+      $dialog.delegate('.image_link','keyup', function(event) {
+        event.preventDefault();
+        var code = event.keyCode || event.which;
+        if(code == 13) { //Enter keycode
+          insertImage(this);
+        }
       });
     }
     $dialog.find("form img").attr('src', '/images/' + service_type + '_small_icon.png');

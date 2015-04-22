@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2012 Instructure, Inc.
+# Copyright (C) 2013 Instructure, Inc.
 #
 # This file is part of Canvas.
 #
@@ -24,7 +24,7 @@ describe DataFixup::FixOutOfSyncOutcomeAlignments do
     outcome_with_rubric
     @rubric_association_object = @course.assignments.create!(:title => 'blah')
     @rubric_association = @rubric.rubric_associations.create!({
-      :association => @rubric_association_object,
+      :association_object => @rubric_association_object,
       :context => @course,
       :purpose => 'grading'
     })
@@ -34,22 +34,22 @@ describe DataFixup::FixOutOfSyncOutcomeAlignments do
     align1 = @rubric_association_object.learning_outcome_alignments.first
     align2 = @rubric.learning_outcome_alignments.first
 
-    align1.reload.should_not be_deleted
-    align2.reload.should_not be_deleted
+    expect(align1.reload).not_to be_deleted
+    expect(align2.reload).not_to be_deleted
 
     DataFixup::FixOutOfSyncOutcomeAlignments.run
 
-    align1.reload.should_not be_deleted
-    align2.reload.should_not be_deleted
+    expect(align1.reload).not_to be_deleted
+    expect(align2.reload).not_to be_deleted
   end
 
   it "should delete alignments to deleted rubrics" do
     align = @rubric.learning_outcome_alignments.first
     Rubric.where(:id => @rubric.id).update_all(:workflow_state => 'deleted')
 
-    align.reload.should_not be_deleted
+    expect(align.reload).not_to be_deleted
     DataFixup::FixOutOfSyncOutcomeAlignments.run
-    align.reload.should be_deleted
+    expect(align.reload).to be_deleted
   end
 
   it "should delete alignments to rubrics that no longer should be aligned" do
@@ -58,26 +58,27 @@ describe DataFixup::FixOutOfSyncOutcomeAlignments do
     data.first.delete(:learning_outcome_id)
     Rubric.where(:id => @rubric.id).update_all(:data => data.to_yaml)
 
-    align.reload.should_not be_deleted
+    expect(align.reload).not_to be_deleted
     DataFixup::FixOutOfSyncOutcomeAlignments.run
-    align.reload.should be_deleted
+    expect(align.reload).to be_deleted
   end
 
   it "should delete alignments to assignments without rubrics" do
     align = @rubric_association_object.learning_outcome_alignments.first
     RubricAssociation.where(:rubric_id => @rubric.id).delete_all
 
-    align.reload.should_not be_deleted
+    expect(align.reload).not_to be_deleted
     DataFixup::FixOutOfSyncOutcomeAlignments.run
-    align.reload.should be_deleted
+    expect(align.reload).to be_deleted
   end
 
   it "should delete alignments to assignments with rubrics without matching alignments" do
     align = @rubric_association_object.learning_outcome_alignments.first
-    @rubric.learning_outcome_alignments.update_all(:learning_outcome_id => 0)
+    lo = LearningOutcome.create!(short_description: 's')
+    @rubric.learning_outcome_alignments.update_all(:learning_outcome_id => lo)
 
-    align.reload.should_not be_deleted
+    expect(align.reload).not_to be_deleted
     DataFixup::FixOutOfSyncOutcomeAlignments.run
-    align.reload.should be_deleted
+    expect(align.reload).to be_deleted
   end
 end

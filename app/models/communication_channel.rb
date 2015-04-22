@@ -17,8 +17,6 @@
 #
 
 class CommunicationChannel < ActiveRecord::Base
-  extend ActiveSupport::Memoizable
-
   # You should start thinking about communication channels
   # as independent of pseudonyms
   include Workflow
@@ -29,15 +27,24 @@ class CommunicationChannel < ActiveRecord::Base
   has_many :pseudonyms
   belongs_to :user
   has_many :notification_policies, :dependent => :destroy
+  has_many :delayed_messages, :dependent => :destroy
   has_many :messages
 
-  before_save :consider_retiring, :assert_path_type, :set_confirmation_code
+  EXPORTABLE_ATTRIBUTES = [
+    :id, :path, :path_type, :position, :user_id, :pseudonym_id, :bounce_count, :workflow_state, :confirmation_code,
+    :created_at, :updated_at, :build_pseudonym_on_confirm
+  ]
+
+  EXPORTABLE_ASSOCIATIONS = [:pseudonyms, :pseudonym, :user]
+
+  before_save :assert_path_type, :set_confirmation_code
   before_save :consider_building_pseudonym
   validates_presence_of :path, :path_type, :user, :workflow_state
   validate :uniqueness_of_path
   validate :not_otp_communication_channel, :if => lambda { |cc| cc.path_type == TYPE_SMS && cc.retired? && !cc.new_record? }
+  after_commit :check_if_bouncing_changed
 
-  acts_as_list :scope => :user_id
+  acts_as_list :scope => :user
 
   has_a_broadcast_policy
 
@@ -47,14 +54,14 @@ class CommunicationChannel < ActiveRecord::Base
   # Constants for the different supported communication channels
   TYPE_EMAIL    = 'email'
   TYPE_SMS      = 'sms'
-  TYPE_CHAT     = 'chat'
   TYPE_TWITTER  = 'twitter'
-  TYPE_FACEBOOK = 'facebook'
+  TYPE_PUSH     = 'push'
+  TYPE_YO       = 'yo'
 
-  RETIRE_THRESHOLD = 5
+  RETIRE_THRESHOLD = 3
 
   def self.sms_carriers
-    @sms_carriers ||= Canvas::ICU.collate_by((Setting.from_config('sms', false) ||
+    @sms_carriers ||= Canvas::ICU.collate_by((ConfigFile.load('sms', false) ||
         { 'AT&T' => 'txt.att.net',
           'Alltel' => 'message.alltel.com',
           'Boost' => 'myboostmobile.com',
@@ -116,27 +123,30 @@ class CommunicationChannel < ActiveRecord::Base
     p.context { @root_account }
   end
 
-  def active_pseudonyms
-    self.user.pseudonyms.active
-  end
-  memoize :active_pseudonyms
-
   def uniqueness_of_path
     return if path.nil?
     return if retired?
     return unless user_id
-    conditions = ["LOWER(path)=LOWER(?) AND user_id=? AND path_type=? AND workflow_state IN('unconfirmed', 'active')", path, user_id, path_type]
+    scope = self.class.by_path(path).where(user_id: user_id, path_type: path_type, workflow_state: ['unconfirmed', 'active'])
     unless new_record?
-      conditions.first << " AND id<>?"
-      conditions << id
+      scope = scope.where("id<>?", id)
     end
-    if self.class.where(conditions).exists?
+    if scope.exists?
       self.errors.add(:path, :taken, :value => path)
     end
   end
 
   def not_otp_communication_channel
     self.errors.add(:workflow_state, "Can't remove a user's SMS that is used for one time passwords") if self.id == self.user.otp_communication_channel_id
+  end
+
+  # Public: Build the url where this record can be confirmed.
+  #
+  #
+  # Returns a string.
+  def confirmation_url
+    return "" unless path_type == TYPE_EMAIL
+    "#{HostUrl.protocol}://#{HostUrl.context_host(context)}/register/#{confirmation_code}"
   end
 
   def context
@@ -152,16 +162,18 @@ class CommunicationChannel < ActiveRecord::Base
   end
 
   # Return the 'path' for simple communication channel types like email and sms. For
-  # Facebook and Twitter, return the user's configured user_name for the service.
+  # Yo and Twitter, return the user's configured user_name for the service.
   def path_description
-    if self.path_type == TYPE_FACEBOOK
-      res = self.user.user_services.for_service(TYPE_FACEBOOK).first.service_user_name rescue nil
-      res ||= t :default_facebook_account, 'Facebook Account'
-      res
-    elsif self.path_type == TYPE_TWITTER
+    if self.path_type == TYPE_TWITTER
       res = self.user.user_services.for_service(TYPE_TWITTER).first.service_user_name rescue nil
       res ||= t :default_twitter_handle, 'Twitter Handle'
       res
+    elsif self.path_type == TYPE_YO
+      res = self.user.user_services.for_service(TYPE_YO).first.service_user_name rescue nil
+      res ||= t :default_yo_name, 'Yo Name'
+      res
+    elsif self.path_type == TYPE_PUSH
+      t 'For All Devices'
     else
       self.path
     end
@@ -189,10 +201,10 @@ class CommunicationChannel < ActiveRecord::Base
   end
 
   def send_otp!(code)
-    m = self.messages.new
+    m = self.messages.scoped.new
     m.to = self.path
     m.body = t :body, "Your Canvas verification code is %{verification_code}", :verification_code => code
-    Mailer.deliver_message(m) rescue nil # omg! just ignore delivery failures
+    Mailer.create_message(m).deliver rescue nil # omg! just ignore delivery failures
   end
 
   # If you are creating a new communication_channel, do nothing, this just
@@ -202,9 +214,9 @@ class CommunicationChannel < ActiveRecord::Base
   def set_confirmation_code(reset=false)
     self.confirmation_code = nil if reset
     if self.path_type == TYPE_EMAIL or self.path_type.nil?
-      self.confirmation_code ||= AutoHandle.generate(nil, 25)
+      self.confirmation_code ||= CanvasSlug.generate(nil, 25)
     else
-      self.confirmation_code ||= AutoHandle.generate
+      self.confirmation_code ||= CanvasSlug.generate
     end
     true
   end
@@ -220,22 +232,25 @@ class CommunicationChannel < ActiveRecord::Base
     end
   }
 
-  scope :by_path, lambda { |path|
+  def self.by_path_condition(path)
     if %{mysql mysql2}.include?(connection_pool.spec.config[:adapter])
-      where(:path => path)
+      path
     else
-      where("LOWER(communication_channels.path)=LOWER(?)", path)
+      "LOWER(#{path})"
     end
+  end
+  scope :by_path, lambda { |path|
+    where("#{by_path_condition("communication_channels.path")}=#{by_path_condition("?")}", path)
   }
 
-  scope :email, where(:path_type => TYPE_EMAIL)
-  scope :sms, where(:path_type => TYPE_SMS)
+  scope :email, -> { where(:path_type => TYPE_EMAIL) }
+  scope :sms, -> { where(:path_type => TYPE_SMS) }
 
-  scope :active, where(:workflow_state => 'active')
-  scope :unretired, where("communication_channels.workflow_state<>'retired'")
+  scope :active, -> { where(:workflow_state => 'active') }
+  scope :unretired, -> { where("communication_channels.workflow_state<>'retired'") }
 
   scope :for_notification_frequency, lambda { |notification, frequency|
-    includes(:notification_policies).where(:notification_policies => { :notification_id => notification, :frequency => frequency })
+    joins(:notification_policies).where(:notification_policies => { :notification_id => notification, :frequency => frequency })
   }
 
   # Get the list of communication channels that overrides an association's default order clause.
@@ -246,19 +261,19 @@ class CommunicationChannel < ActiveRecord::Base
     twitter_service = user.user_services.for_service(CommunicationChannel::TYPE_TWITTER).first
     twitter_service.assert_communication_channel if twitter_service
 
-    rank_order = [TYPE_EMAIL, TYPE_SMS]
-    # Add facebook and twitter (in that order) if the user's account is setup for them.
-    rank_order << TYPE_FACEBOOK unless user.user_services.for_service(CommunicationChannel::TYPE_FACEBOOK).empty?
+    rank_order = [TYPE_EMAIL, TYPE_SMS, TYPE_PUSH]
+    # Add twitter and yo (in that order) if the user's account is setup for them.
     rank_order << TYPE_TWITTER if twitter_service
+    rank_order << TYPE_YO unless user.user_services.for_service(CommunicationChannel::TYPE_YO).empty?
     self.unretired.where('communication_channels.path_type IN (?)', rank_order).
       order("#{self.rank_sql(rank_order, 'communication_channels.path_type')} ASC, communication_channels.position asc").
       all
   end
 
-  scope :include_policies, includes(:notification_policies)
+  scope :include_policies, -> { includes(:notification_policies) }
 
   scope :in_state, lambda { |state| where(:workflow_state => state.to_s) }
-  scope :of_type, lambda {|type| where(:path_type => type) }
+  scope :of_type, lambda { |type| where(:path_type => type) }
   
   def can_notify?
     self.notification_policies.any? { |np| np.frequency == 'never' } ? false : true
@@ -293,11 +308,6 @@ class CommunicationChannel < ActiveRecord::Base
     true
   end
   
-  def consider_retiring
-    self.retire if self.bounce_count >= RETIRE_THRESHOLD
-    true
-  end
-  
   alias_method :destroy!, :destroy
   def destroy
     self.workflow_state = 'retired'
@@ -307,7 +317,7 @@ class CommunicationChannel < ActiveRecord::Base
   workflow do
     state :unconfirmed do
       event :confirm, :transitions_to => :active do
-        self.set_confirmation_code(true)
+        self.set_confirmation_code
       end
       event :retire, :transitions_to => :retired
     end
@@ -317,16 +327,14 @@ class CommunicationChannel < ActiveRecord::Base
     end
     
     state :retired do
-      event :re_activate, :transitions_to => :active do
-        self.bounce_count = 0
-      end
+      event :re_activate, :transitions_to => :active
     end
   end
 
   # This is setup as a default in the database, but this overcomes misspellings.
   def assert_path_type
-    pt = self.path_type
-    self.path_type = TYPE_EMAIL unless pt == TYPE_EMAIL or pt == TYPE_SMS or pt == TYPE_CHAT or pt == TYPE_FACEBOOK or pt == TYPE_TWITTER
+    valid_types = [TYPE_EMAIL, TYPE_SMS, TYPE_TWITTER, TYPE_PUSH, TYPE_YO]
+    self.path_type = TYPE_EMAIL unless valid_types.include?(path_type)
     true
   end
   protected :assert_path_type
@@ -343,6 +351,7 @@ class CommunicationChannel < ActiveRecord::Base
     scope = CommunicationChannel.active.by_path(self.path).of_type(self.path_type)
     merge_candidates = {}
     Shard.with_each_shard(shards) do
+      scope = scope.shard(Shard.current)
       scope.where("user_id<>?", self.user_id).includes(:user).map(&:user).select do |u|
         result = merge_candidates.fetch(u.global_id) do
           merge_candidates[u.global_id] = (u.all_active_pseudonyms.length != 0)
@@ -355,5 +364,45 @@ class CommunicationChannel < ActiveRecord::Base
 
   def has_merge_candidates?
     !merge_candidates(true).empty?
+  end
+
+  def bouncing?
+    self.bounce_count >= RETIRE_THRESHOLD
+  end
+
+  def was_bouncing?
+    old_bounce_count = self.previous_changes[:bounce_count].try(:first)
+    old_bounce_count ||= self.bounce_count
+    old_bounce_count >= RETIRE_THRESHOLD
+  end
+
+  def was_retired?
+    old_workflow_state = self.previous_changes[:workflow_state].try(:first)
+    old_workflow_state ||= self.workflow_state
+    old_workflow_state.to_s == 'retired'
+  end
+
+  def check_if_bouncing_changed
+    if retired?
+      self.user.update_bouncing_channel_message!(self) if !was_retired? && was_bouncing?
+    else
+      if (was_retired? && bouncing?) || (was_bouncing? != bouncing?)
+        self.user.update_bouncing_channel_message!(self)
+      end
+    end
+  end
+  private :check_if_bouncing_changed
+
+  def self.bounce_for_path(path)
+    Shard.with_each_shard(CommunicationChannel.associated_shards(path)) do
+      CommunicationChannel.unretired.email.by_path(path).each do |channel|
+        channel.update_attribute(:bounce_count, channel.bounce_count + 1)
+      end
+    end
+  end
+
+  def self.find_by_confirmation_code(code)
+    where(confirmation_code: code).first
+
   end
 end

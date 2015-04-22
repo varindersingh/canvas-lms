@@ -17,13 +17,14 @@
 #
 
 define [
+  'jquery'
   'underscore'
   'Backbone'
   'compiled/models/Group'
   'compiled/models/User'
   'compiled/collections/CollaboratorCollection'
   'jst/collaborations/collaborator'
-], ({extend, filter, map}, {View}, Group, User, CollaboratorCollection, collaboratorTemplate) ->
+], ($, {extend, filter, map}, {View}, Group, User, CollaboratorCollection, collaboratorTemplate) ->
 
   class MemberListView extends View
     events:
@@ -31,6 +32,7 @@ define [
       'click .remove-all': 'removeAll'
 
     initialize: ->
+      super
       @collection = @createCollection()
       @cacheElements()
       @attachEvents()
@@ -60,13 +62,14 @@ define [
     render: =>
       @removeCurrentUser() if @options.currentUser
       @updateElementVisibility()
-      collaborators = @collection.map (c) =>
+      collaboratorsHtml = @collection.map (c) =>
         collaboratorTemplate(extend(c.toJSON(),
                                     type: c.modelType or c.get('type'),
                                     id: c.get('collaborator_id') or c.get('id')
                                     name: c.get('sortable_name') or c.get('name')
                                     selected: true))
-      @$list.html(collaborators.join(''))
+      collaboratorsHtml = collaboratorsHtml.join('')
+      @$list.html(collaboratorsHtml)
       @updateFocus() if @currentIndex? && @hasFocus
       @hasFocus = false
 

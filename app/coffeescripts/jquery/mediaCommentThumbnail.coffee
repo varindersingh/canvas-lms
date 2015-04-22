@@ -3,7 +3,8 @@ define [
   'underscore'
   'str/htmlEscape'
   'jquery'
-], (I18n, _, htmlEscape, $) ->
+  'compiled/util/deparam'
+], (I18n, _, htmlEscape, $, deparam) ->
 
   MEDIA_COMMENT_THUMBNAIL_SIZES =
     normal: {width: 140, height: 100}
@@ -13,6 +14,10 @@ define [
     return console.log('Kaltura has not been enabled for this account') unless INST.kalturaSettings
 
     $link = $(elem)
+    try
+      url = new URL($link.attr('href'))
+    return if url && deparam(url.search).no_preview
+
     dimensions = MEDIA_COMMENT_THUMBNAIL_SIZES[size] ? MEDIA_COMMENT_THUMBNAIL_SIZES.normal
     id = $link.data('media_comment_id') ||
          $.trim($link.find(".media_comment_id:first").text()) ||
@@ -20,17 +25,14 @@ define [
          $.trim($link.parent().find(".media_comment_id:first").text())
 
     if id
-      domain = if window.location.protocol is'https:'
-        "http://#{INST.kalturaSettings.resource_domain}"
-      else
-        "https://#{INST.kalturaSettings.secure_resource_domain || INST.kalturaSettings.domain}"
+      domain = "https://#{INST.kalturaSettings.resource_domain}"
 
       backgroundUrl = "#{domain}/p/#{INST.kalturaSettings.partner_id}/thumbnail/entry_id/#{id}/width/" +
                       "#{dimensions.width}/height/#{dimensions.height}/bgcolor/000000/type/2/vid_sec/5"
 
       $thumbnail = $ "<span
-                        style='background-image: url(#{backgroundUrl});'
-                        class='media_comment_thumbnail media_comment_thumbnail-#{size}'
+                        style='background-image: url(#{htmlEscape(backgroundUrl)});'
+                        class='media_comment_thumbnail media_comment_thumbnail-#{htmlEscape(size)}'
                       >
                         <span class='media_comment_thumbnail_play_button'>
                           #{htmlEscape I18n.t 'click_to_view', 'Click to view'}
@@ -49,6 +51,8 @@ define [
         $link.empty()
 
       $a
+        .data('download', $a.attr('href'))
+        .prop('href', '#')
         .addClass('instructure_inline_media_comment')
         .append($thumbnail)
         .css

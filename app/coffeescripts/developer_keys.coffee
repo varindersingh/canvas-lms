@@ -7,20 +7,20 @@ define [
   'jquery.ajaxJSON'
   'jquery.instructure_date_and_time'
   'jqueryui/dialog'
-], (I18n, $, developer_key, developer_key_form, preventDefault) ->
+], (I18n, $, developer_key, developerKeyFormTemplate, preventDefault) ->
   page = 0
   buildKey = (key) ->
     key.icon_image_url = key.icon_url || "/images/blank.png"
     key.name ||= I18n.t('unnamed_tool', "Unnamed Tool")
     key.user_name ||= I18n.t('no_user', "No User")
-    key.created = $.parseFromISO(key.created_at).datetime_formatted
-    key.last_auth = $.parseFromISO(key.last_auth_at).datetime_formatted
-    key.last_access = $.parseFromISO(key.last_access_at).datetime_formatted
+    key.created = $.datetimeString(key.created_at)
+    key.last_auth = $.datetimeString(key.last_auth_at)
+    key.last_access = $.datetimeString(key.last_access_at)
     $key = $(developer_key(key));
     $key.data('key', key)
     
   buildForm = (key, $orig) ->
-    $form = $(developer_key_form(key || {}))
+    $form = $(developerKeyFormTemplate(key || {}))
     $form.formSubmit({
       beforeSubmit: ->
         $("#edit_dialog button.submit").text(I18n.t('button.saving', "Saving Key..."))
@@ -72,7 +72,7 @@ define [
     $form = buildForm()
     $("#edit_dialog").empty().append($form).dialog('open')
   )
-  $("#edit_dialog").html(developer_key_form({})).dialog({
+  $("#edit_dialog").html(developerKeyFormTemplate({})).dialog({
     autoOpen: false,
     width: 350
   }).on('click', '.cancel', () ->

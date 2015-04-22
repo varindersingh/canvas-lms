@@ -18,12 +18,29 @@
 define([
   'i18n!instructure',
   'jquery' /* $ */,
+  'str/htmlEscape',
+  'compiled/behaviors/authenticity_token',
   'jquery.ajaxJSON' /* ajaxJSON */,
   'jqueryui/dialog',
   'jquery.scrollToVisible' /* scrollToVisible */,
   'vendor/jquery.ba-hashchange' /* hashchange */,
   'vendor/jquery.scrollTo' /* /\.scrollTo/ */
-], function(I18n, $) {
+], function(I18n, $, htmlEscape, authenticity_token) {
+
+  $.fn.setOptions = function(prompt, options) {
+    var result = prompt ? "<option value=''>" + htmlEscape(prompt) + "</option>" : "";
+
+    if (options == null) {
+      options = [];
+    }
+
+    options.forEach( function(opt) {
+      var optHtml = htmlEscape(opt);
+      result += "<option value=\"" + optHtml + "\">" + optHtml + "</option>";
+    });
+
+    return this.html($.raw(result));
+  }
 
   // this function is to prevent you from doing all kinds of expesive operations on a
   // jquery object that doesn't actually have any elements in it
@@ -100,12 +117,7 @@ define([
           };
         }
         var data = options.prepareData ? options.prepareData.call($object, $dialog) : {};
-        if (options.token) {
-          data.authenticity_token = options.token;
-        }
-        if (!data.authenticity_token) {
-          data.authenticity_token = $("#ajax_authenticity_token").text();
-        }
+        data.authenticity_token = authenticity_token();
         $.ajaxJSON(options.url, "DELETE", data, function(data) {
           options.success.call($object, data);
         }, function(data, request, status, error) {
@@ -382,8 +394,7 @@ define([
             if (val === (val = input.val())) {return;}
 
             // Enter new content into testSubject
-            var escaped = val.replace(/&/g, '&amp;').replace(/\s/g,'&nbsp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            testSubject.html(escaped);
+            testSubject.text(val);
 
             // Calculate new width + whether to change
             var testerWidth = testSubject.width(),

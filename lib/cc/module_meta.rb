@@ -37,7 +37,16 @@ module CC
               "xsi:schemaLocation"=> "#{CCHelper::CANVAS_NAMESPACE} #{CCHelper::XSD_URI}"
       ) do |mods_node|
         @course.context_modules.not_deleted.each do |cm|
-          next unless export_object?(cm)
+
+          unless export_object?(cm)
+            # if the whole module isn't selected, check to see if a specific item is selected, and make sure that item gets exported
+            cm.content_tags.not_deleted.each do |ct|
+              if export_object?(ct) && !['ContextModuleSubHeader', 'ExternalUrl'].member?(ct.content_type) && ct.content
+                add_item_to_export(ct.content)
+              end
+            end
+            next
+          end
           mod_migration_id = CCHelper.create_key(cm)
           # context modules are in order and a pre-req can only reference
           # a previous module, so just adding as we go is okay
@@ -76,7 +85,13 @@ module CC
                   item_node.workflow_state ct.workflow_state
                   item_node.title ct.title
                   item_node.identifierref CCHelper.create_key(ct.content_or_self) unless ct.content_type == 'ContextModuleSubHeader'
-                  item_node.url ct.url if ["ContextExternalTool", 'ExternalUrl'].member? ct.content_type
+                  if ct.content_type == "ContextExternalTool"
+                    item_node.url ct.url
+                    if ct.content && ct.content.context != @course
+                      item_node.global_identifierref ct.content.id
+                    end
+                  end
+                  item_node.url ct.url if ct.content_type == 'ExternalUrl'
                   item_node.position ct.position
                   item_node.new_tab ct.new_tab
                   item_node.indent ct.indent

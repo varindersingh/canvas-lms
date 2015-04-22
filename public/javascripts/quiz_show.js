@@ -24,6 +24,7 @@ define([
   'quiz_inputs',
   'compiled/models/Quiz',
   'compiled/views/PublishButtonView',
+  'compiled/quizzes/dump_events',
   'jquery.instructure_date_and_time' /* dateString, time_field, datetime_field */,
   'jqueryui/dialog',
   'compiled/jquery/fixDialogButtons',
@@ -32,25 +33,46 @@ define([
   'jquery.instructure_misc_plugins' /* ifExists, confirmDelete */,
   'jquery.disableWhileLoading',
   'message_students' /* messageStudents */
-], function(I18n, $, MessageStudentsDialog, showAnswerArrows, inputMethods, Quiz, PublishButtonView) {
+], function(I18n, $, MessageStudentsDialog, showAnswerArrows, inputMethods, Quiz, PublishButtonView, QuizLogAuditingEventDumper) {
 
 
   $(document).ready(function () {
+    QuizLogAuditingEventDumper(true);
 
     function ensureStudentsLoaded(callback) {
       if ($('#quiz_details').length) {
         return callback();
       } else {
-        return $.get($("#quiz_details_wrapper").data('url'), function(data) {
-          $("#quiz_details_wrapper").html(data);
+        return $.get($("#quiz_details_wrapper").data('url'), function(html) {
+          $("#quiz_details_wrapper").html(html);
           callback();
         });
       };
     }
 
     showAnswerArrows();
-    inputMethods.disableInputs('[type=radio], [type=checkbox]');
-    inputMethods.setWidths();
+    // quiz_show is being pulled into ember show for now. only hide inputs
+    // when we don't have a .allow-inputs
+    if (!$('.allow-inputs').length) {
+      inputMethods.disableInputs('[type=radio], [type=checkbox]');
+      inputMethods.setWidths();
+    }
+
+    $('form.edit_quizzes_quiz').on('submit', function(e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      $(this).find('.loading').removeClass('hidden');
+      var data = $(this).serializeArray();
+      var url = $(this).attr('action');
+      $.ajax({
+        url: url,
+        data: data,
+        type: 'POST',
+        success: function() {
+          $('.edit_quizzes_quiz').parents('.alert').hide();
+        }
+      });
+    });
 
     $(".delete_quiz_link").click(function(event) {
       event.preventDefault();
@@ -169,7 +191,7 @@ define([
     });
 
     var $el = $('#quiz-publish-link');
-    var model = new Quiz($.extend(ENV.QUIZ, {publishable: !$el.hasClass("disabled")}));
+    var model = new Quiz($.extend(ENV.QUIZ, {unpublishable: !$el.hasClass("disabled")}));
     var view = new PublishButtonView({model: model, el: $el});
 
     var refresh = function() {

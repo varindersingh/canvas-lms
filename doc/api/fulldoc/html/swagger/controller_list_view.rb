@@ -10,20 +10,34 @@ class ControllerListView < HashView
   end
 
   def symbolic_name
-    @name.underscore
+    @name.underscore.gsub(/\s+/, '_')
+  end
+
+  def config_domain_yaml
+    YAML.load(File.read(File.join(Rails.root,'config','domain.yml'))) if File.exist?(File.join(Rails.root,'config','domain.yml'))
+  end
+
+  def canvas_url
+    if config = config_domain_yaml[Rails.env]
+      if config['ssl']
+        "https://"
+      else
+        "http://"
+      end + config['domain']
+    end
   end
 
   def domain
-    ENV["SWAGGER_DOMAIN"] || "http://canvas.instructure.com"
+    ENV["CANVAS_DOMAIN"] || (config_domain_yaml ? canvas_url : "https://canvas.instructure.com")
   end
 
   def swagger_file
-    "#{@name.underscore.gsub(' ', '_')}.json"
+    "#{symbolic_name}.json"
   end
 
   def swagger_reference
     {
-      "path" => "#{domain}/doc/api/" + swagger_file,
+      "path" => '/' + swagger_file,
       "description" => @name,
     }
   end
@@ -41,11 +55,15 @@ class ControllerListView < HashView
   end
 
   def apis
-    @controllers.map do |ctrl|
-      ctrl.methods.map do |method|
-        method.to_swagger
+    [].tap do |list|
+      @controllers.each do |controller|
+        controller.methods.each do |method|
+          method.routes.each do |route|
+            list << route.to_swagger
+          end
+        end
       end
-    end.flatten
+    end
   end
 
   def models

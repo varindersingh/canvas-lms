@@ -1,50 +1,22 @@
-# JSON::Ext overwrites Rails' implemenation of these.
-# And does dumb stuff instantiating a state object and temp buffer and crap
-# which is really slow if you have 50,000 nil values.
-# Just return teh constant values.
-class NilClass
-  def as_json(*args)
-    self
-  end
+ActiveSupport::JSON.backend = :oj
+MultiJson.dump_options = {:escape_mode => :xss_safe}
 
-  def to_json(*args)
-    'null'
-  end
-end
+# Rails4 gives an option to opt out of encoding BigDecimal json as a string
+if ActiveSupport.respond_to?(:encode_big_decimal_as_string)
+  ActiveSupport.encode_big_decimal_as_string = false
 
-class FalseClass
-  def as_json(*args)
-    self
-  end
+# Rails3 changes BigDecimal #to_json to encode as a string. This breaks
+# bw-compat in our apis, so this switches it back to the native behavior.
+else
+  require 'bigdecimal'
 
-  def to_json(*args)
-    'false'
-  end
-end
-
-class TrueClass
-  def as_json(*args)
-    self
-  end
-
-  def to_json(*args)
-    'true'
-  end
-end
-
-# This changes a "perfect" reference check for a fast one.  If you see this
-# exception, you can comment this out, and then the actual rails code will
-# raise a similar exception on the very first duplicate object, to help you
-# pinpoint the problem.
-ActiveSupport::JSON::Encoding.module_eval do
-  def self.encode(value, options = nil)
-    options = {} unless Hash === options
-    depth = (options[:recursion_depth] ||= 1)
-    raise CircularReferenceError, 'something references itself (probably)' if depth > 1000
-    options[:recursion_depth] = depth + 1
-    Api.stringify_json_ids(value) if options[:stringify_json_ids]
-    value.to_json(options)
-  ensure
-    options[:recursion_depth] = depth
+  class BigDecimal
+    def as_json(options = nil)
+      if finite?
+        self
+      else
+        NilClass::AS_JSON
+      end
+    end
   end
 end

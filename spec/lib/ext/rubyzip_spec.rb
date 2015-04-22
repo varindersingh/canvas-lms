@@ -1,6 +1,6 @@
 # coding: utf-8
 
-require File.expand_path(File.dirname(__FILE__) + '/../../spec_helper.rb')
+require 'spec_helper'
 
 describe "rubyzip encoding fix patch" do
   before(:all) do
@@ -14,7 +14,7 @@ describe "rubyzip encoding fix patch" do
     tmpzipfile = Tempfile.new('zipfile')
     @zip_path = tmpzipfile.path
     tmpzipfile.close!
-    Zip::ZipFile.open(@zip_path, true) do |arch|
+    Zip::File.open(@zip_path, true) do |arch|
       arch.add @utf8_name, @tmpfile.path
       arch.add @ascii_name, @tmpfile.path
     end
@@ -27,7 +27,7 @@ describe "rubyzip encoding fix patch" do
 
   context "with zip file" do
     before(:each) do
-      @arch = Zip::ZipFile.open(@zip_path, 'r')
+      @arch = Zip::File.open(@zip_path, 'r')
     end
 
     after(:each) do
@@ -36,21 +36,21 @@ describe "rubyzip encoding fix patch" do
 
     describe "entries" do
       it "should return UTF-8 names in UTF-8 encoding" do
-        @arch.entries.map(&:name).select { |filename| filename.encoding.to_s == 'UTF-8' }.should eql [@utf8_name]
+        expect(@arch.entries.map(&:name).select { |filename| filename.encoding.to_s == 'UTF-8' }).to eql [@utf8_name]
       end
 
       it "should return non-UTF-8 names in ASCII-8BIT encoding" do
-        @arch.entries.map(&:name).select { |filename| filename.encoding.to_s == 'ASCII-8BIT' }.should eql [@ascii_name]
+        expect(@arch.entries.map(&:name).select { |filename| filename.encoding.to_s == 'ASCII-8BIT' }).to eql [@ascii_name]
       end
     end
 
     describe "find_entry" do
       it "should find a UTF-8 name" do
-        @arch.find_entry(@utf8_name).should_not be_nil
+        expect(@arch.find_entry(@utf8_name)).not_to be_nil
       end
 
       it "should find a non-UTF-8 name" do
-        @arch.find_entry(@ascii_name).should_not be_nil
+        expect(@arch.find_entry(@ascii_name)).not_to be_nil
       end
     end
   end

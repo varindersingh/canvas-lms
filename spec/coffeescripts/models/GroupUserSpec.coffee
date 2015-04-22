@@ -1,34 +1,36 @@
 define [
   'Backbone'
+  'compiled/models/Group'
   'compiled/models/GroupUser'
+  'compiled/models/GroupCategory'
   'jquery'
-], (Backbone, GroupUser, $) ->
+], (Backbone, Group, GroupUser, GroupCategory, $) ->
 
   module 'GroupUser',
     setup: ->
-      @groupUser = new GroupUser()
-      @leavePreviousGroupStub = sinon.stub @groupUser, 'leavePreviousGroup'
+      @groupUser = new GroupUser
+        category: new GroupCategory
+      @leaveGroupStub = sinon.stub @groupUser, 'leaveGroup'
       @joinGroupStub = sinon.stub @groupUser, 'joinGroup'
     teardown: ->
-      @leavePreviousGroupStub.restore()
+      @leaveGroupStub.restore()
       @joinGroupStub.restore()
 
-  test "updates groupId correctly upon save and fires joinGroup and leavePreviousGroup appropriately", ->
-    @groupUser.save({'groupId': 777})
-    equal @groupUser.get('groupId'), 777
-    equal @groupUser.get('previousGroupId'), null
+  test "updates group correctly upon save and fires joinGroup and leaveGroup appropriately", ->
+    group1 = new Group(id: 777)
+    @groupUser.save({'group': group1})
+    equal @groupUser.get('group'), group1
     equal @joinGroupStub.callCount, 1
-    ok @joinGroupStub.calledWith 777
-    equal @leavePreviousGroupStub.callCount, 0
+    ok @joinGroupStub.calledWith group1
+    equal @leaveGroupStub.callCount, 0
 
-    @groupUser.save({'groupId': 123})
-    equal @groupUser.get('groupId'), 123
-    equal @groupUser.get('previousGroupId'), 777
+    group2 = new Group(id: 123)
+    @groupUser.save({'group': group2})
+    equal @groupUser.get('group'), group2
     equal @joinGroupStub.callCount, 2
-    ok @joinGroupStub.calledWith 123
+    ok @joinGroupStub.calledWith group2
 
-    @groupUser.save({'groupId': null})
-    equal @groupUser.get('groupId'), null
-    equal @groupUser.get('previousGroupId'), 123
+    @groupUser.save({'group': null})
+    equal @groupUser.get('group'), null
     equal @joinGroupStub.callCount, 2
-    equal @leavePreviousGroupStub.callCount, 1
+    equal @leaveGroupStub.callCount, 1

@@ -16,18 +16,34 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 class Canvas::Migration::Worker::CCWorker < Struct.new(:migration_id)
-  def perform
-    cm = ContentMigration.find_by_id migration_id
+  def perform(cm=nil)
+    cm ||= ContentMigration.where(id: migration_id).first
     cm.job_progress.start unless cm.skip_job_progress
     begin
       cm.update_conversion_progress(1)
       settings = cm.migration_settings.clone
       settings[:content_migration_id] = migration_id
       settings[:user_id] = cm.user_id
-      settings[:attachment_id] = cm.attachment.id rescue nil
       settings[:content_migration] = cm
 
-      converter_class = settings[:converter_class] || Canvas::Migration::Worker::get_converter(settings)
+      if cm.attachment
+        settings[:attachment_id] = cm.attachment.id
+      elsif settings[:file_url]
+        # create attachment and download file
+        att = Canvas::Migration::Worker.download_attachment(cm, settings[:file_url])
+        settings[:attachment_id] = att.id
+      elsif !settings[:no_archive_file]
+        raise Canvas::Migration::Error, I18n.t(:no_migration_file, "File required for content migration.")
+      end
+
+      converter_class = settings[:converter_class]
+      unless converter_class
+        if settings[:no_archive_file]
+          raise ArgumentError, "converter_class required for content migration with no file"
+        end
+        settings[:archive] = Canvas::Migration::Archive.new(settings)
+        converter_class = settings[:archive].get_converter
+      end
       converter = converter_class.new(settings)
 
       course = converter.export
@@ -77,4 +93,5 @@ class Canvas::Migration::Worker::CCWorker < Struct.new(:migration_id)
                          :max_attempts => 1,
                          :strand => content_migration.strand)
   end
+
 end

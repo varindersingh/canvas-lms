@@ -15,37 +15,150 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
-define(['jquery', 'jquery.google-analytics'], function($) {
+define(['jquery', 'jquery.google-analytics', 'compiled/jquery/ModuleSequenceFooter'], function($) {
 
-if(!$("#tool_form").hasClass('new_tab')) {
-  $("#content").addClass('padless');
-} else {
-  var $button = $("#tool_form button");
+var $toolForm = $("#tool_form")
+
+var launchToolManually = function(){
+  var $button = $toolForm.find('button');
+
+  $toolForm.show();
+
   // Firefox remembers disabled state after page reloads
   $button.attr('disabled', false);
   setTimeout(function() {
     // LTI links have a time component in the signature and will
-    // expire after a few minutes. 
+    // expire after a few minutes.
     $button.attr('disabled', true).text($button.data('expired_message'));
-  }, 60 * 2.5 * 1000)
-  $("#tool_form").submit(function() {
+  }, 60 * 2.5 * 1000);
+
+
+  $toolForm.submit(function() {
     $(this).find(".load_tab,.tab_loaded").toggle();
   });
 }
 
-var toolName = $("#tool_form").attr('data-tool-id') || "unknown";
-var toolPath = $("#tool_form").attr('data-tool-path');
-$.trackEvent('tool_launch', toolName, toolPath);
+var launchToolInNewTab = function(){
+  $toolForm.attr('target', '_blank');
+  launchToolManually();
+}
 
-$("#tool_form:not(.new_tab)").submit().hide();
-$(document).ready(function() {
-  if($("#tool_content").length) {
-    $(window).resize(function() {
-      var top = $("#tool_content").offset().top;
-      var height = $(window).height();
-      $("#tool_content").height(height - top);
+switch($toolForm.data('tool-launch-type')){
+  case 'window':
+    $toolForm.show();
+    launchToolInNewTab();
+    break;
+  case 'self':
+    $toolForm.removeAttr('target')
+    try {
+      $toolForm.submit();
+    } catch(e){}
+    break;
+  default:
+    //Firefox throws an error when submitting insecure content
+    try {
+      $toolForm.submit();
+    } catch(e){}
+
+    $("#tool_content").bind("load", function(){
+      $("#content").addClass('padless');
+      $('#insecure_content_msg').hide();
+      $toolForm.hide();
+    });
+    setTimeout(function(){
+      if($('#insecure_content_msg').is(":visible")){
+        $('#load_failure').show()
+        launchToolInNewTab();
+      }
+    }, 3 * 1000);
+    break;
+}
+
+//Google analytics tracking code
+var toolName = $toolForm.data('tool-id') || "unknown";
+var toolPath = $toolForm.data('tool-path');
+var messageType = $toolForm.data('message-type') || 'tool_launch';
+$.trackEvent(messageType, toolName, toolPath);
+
+//Iframe resize handler
+var $tool_content_wrapper;
+var min_tool_height, canvas_chrome_height;
+
+function tool_content_wrapper() {
+  return $tool_content_wrapper || $('.tool_content_wrapper');
+}
+
+var resize_tool_content_wrapper = function(height) {
+  var tool_height = min_tool_height || 450;
+  tool_content_wrapper().height(tool_height > height ? tool_height : height);
+}
+
+$(function() {
+  var $window = $(window);
+  $tool_content_wrapper = $('.tool_content_wrapper');
+
+  min_tool_height = $('#main').height();
+  canvas_chrome_height = $tool_content_wrapper.offset().top + $('#wrapper').height() - $('#main').height();
+
+  if ($tool_content_wrapper.length) {
+    $window.resize(function () {
+      if (!$tool_content_wrapper.data('height_overridden')) {
+        resize_tool_content_wrapper($window.height() - canvas_chrome_height);
+      }
     }).triggerHandler('resize');
   }
+
+  if (ENV.LTI != null && ENV.LTI.SEQUENCE != null) {
+    $('#module_sequence_footer').moduleSequenceFooter({
+      assetType: 'Lti',
+      assetID: ENV.LTI.SEQUENCE.ASSET_ID,
+      courseID: ENV.LTI.SEQUENCE.COURSE_ID
+    });
+  }
+
 });
+
+window.addEventListener('message', function(e) {
+  try {
+    var message = JSON.parse(e.data);
+    switch (message.subject) {
+      case 'lti.frameResize':
+        var height = message.height;
+        if (height >= 5000) height = 5000;
+        if (height <= 0) height = 1;
+
+        tool_content_wrapper().data('height_overridden', true);
+        resize_tool_content_wrapper(height);
+        break;
+
+      case 'lti.setUnloadMessage':
+        setUnloadMessage(message.message);
+        break;
+
+      case 'lti.removeUnloadMessage':
+        removeUnloadMessage();
+        break;
+    }
+  } catch(err) {
+    (console.error || console.log)('invalid message received from ', e.origin);
+  }
+});
+
+var beforeUnloadHandler;
+function setUnloadMessage(msg) {
+  removeUnloadMessage();
+
+  beforeUnloadHandler = function(e) {
+    return (e.returnValue = msg || "");
+  }
+  window.addEventListener('beforeunload', beforeUnloadHandler);
+}
+
+function removeUnloadMessage() {
+  if (beforeUnloadHandler) {
+    window.removeEventListener('beforeunload', beforeUnloadHandler);
+    beforeUnloadHandler = null;
+  }
+}
 
 });

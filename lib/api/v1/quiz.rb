@@ -15,35 +15,8 @@
 # You should have received a copy of the GNU Affero General Public License along
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
-
 module Api::V1::Quiz
   include Api::V1::Json
-  include Api::V1::AssignmentOverride
-  include Api::V1::Locked
-
-  API_ALLOWED_QUIZ_OUTPUT_FIELDS = {
-    :only => %w(
-      id
-      title
-      description
-      quiz_type
-      assignment_group_id
-      time_limit
-      shuffle_answers
-      hide_results
-      show_correct_answers
-      scoring_policy
-      allowed_attempts
-      one_question_at_a_time
-      points_possible
-      cant_go_back
-      access_code
-      ip_filter
-      due_at
-      lock_at
-      unlock_at
-      )
-  }
 
   API_ALLOWED_QUIZ_INPUT_FIELDS = {
     :only => %w(
@@ -55,6 +28,10 @@ module Api::V1::Quiz
       shuffle_answers
       hide_results
       show_correct_answers
+      show_correct_answers_last_attempt
+      show_correct_answers_at
+      hide_correct_answers_at
+      one_time_results
       scoring_policy
       allowed_attempts
       one_question_at_a_time
@@ -65,44 +42,93 @@ module Api::V1::Quiz
       lock_at
       unlock_at
       published
+      require_lockdown_browser
+      require_lockdown_browser_for_results
+      require_lockdown_browser_monitor
+      lockdown_browser_monitor_data
       )
   }
 
-  def quizzes_json(quizzes, context, user, session)
+  def quizzes_json(quizzes, context, user, session, options={})
     quizzes.map do |quiz|
-      quiz_json(quiz, context, user, session)
+      quiz_json(quiz, context, user, session, options)
     end
   end
 
-  def quiz_json(quiz, context, user, session)
-    hash = api_json(quiz, user, session, API_ALLOWED_QUIZ_OUTPUT_FIELDS).merge(
-      :html_url => polymorphic_url([context, quiz]),
-      :mobile_url => polymorphic_url([context, quiz], :persist_headless => 1, :force_user => 1),
-      :question_count => quiz.available_question_count,
-      :published => quiz.published?
-    )
-    locked_json(hash, quiz, user, 'quiz', :context => context)
-    hash
+  def quiz_json(quiz, context, user, session, options={})
+    if accepts_jsonapi?
+      Canvas::APIArraySerializer.new([quiz],
+                         scope: user,
+                         session: session,
+                         root: :quizzes,
+                         each_serializer: Quizzes::QuizSerializer,
+                         controller: self,
+                         serializer_options: options).as_json
+    else
+      Quizzes::QuizSerializer.new(quiz,
+                         scope: user,
+                         session: session,
+                         root: false,
+                         controller: self,
+                         serializer_options: options).as_json
+    end
+  end
+
+  def jsonapi_quizzes_json(options)
+    scope = options.fetch(:scope)
+    api_route = options.fetch(:api_route)
+    @quizzes, meta = Api.jsonapi_paginate(scope, self, api_route)
+    @quiz_submissions = Quizzes::QuizSubmission.where(quiz_id: @quizzes, user_id: @current_user.id).index_by(&:quiz_id)
+    meta[:primaryCollection] = 'quizzes'
+    add_meta_permissions!(meta)
+    Canvas::APIArraySerializer.new(@quizzes,
+                          scope: @current_user,
+                          controller: self,
+                          root: :quizzes,
+                          self_quiz_submissions: @quiz_submissions,
+                          meta: meta,
+                          each_serializer: Quizzes::QuizSerializer,
+                          include_root: false).as_json
+  end
+
+  def add_meta_permissions!(meta)
+    meta[:permissions] ||= {}
+    meta[:permissions][:quizzes] = {
+      create: context.grants_right?(@current_user, session, :manage_assignments)
+    }
   end
 
   def filter_params(quiz_params)
     quiz_params.slice(*API_ALLOWED_QUIZ_INPUT_FIELDS[:only])
   end
 
-  def update_api_quiz(quiz, quiz_params, save = true)
-    return nil unless quiz.is_a?(Quiz) && quiz_params.is_a?(Hash)
+  def update_api_quiz(quiz, params, save = true)
+    quiz_params = accepts_jsonapi? ? Array(params[:quizzes]).first : params[:quiz]
+    return nil unless quiz.is_a?(Quizzes::Quiz) && quiz_params.is_a?(Hash)
     update_params = filter_params(quiz_params)
 
     # make sure assignment_group_id belongs to context
     if update_params.has_key?("assignment_group_id")
       ag_id = update_params.delete("assignment_group_id").presence
-      ag = quiz.context.assignment_groups.find_by_id(ag_id)
+      ag = quiz.context.assignment_groups.where(id: ag_id).first
       update_params["assignment_group_id"] = ag.try(:id)
+    end
+
+    # make sure allowed_attempts isn't set with a silly negative value
+    # (note that -1 is ok and it means unlimited attempts)
+    if update_params.has_key?('allowed_attempts')
+      allowed_attempts = update_params.fetch('allowed_attempts', quiz.allowed_attempts)
+      allowed_attempts = -1 if allowed_attempts.nil?
+
+      if allowed_attempts.to_i < -1
+        update_params.delete 'allowed_attempts'
+      end
     end
 
     # hide_results="until_after_last_attempt" is valid if allowed_attempts > 1
     if update_params['hide_results'] == "until_after_last_attempt"
       allowed_attempts = update_params.fetch('allowed_attempts', quiz.allowed_attempts)
+
       unless allowed_attempts.to_i > 1
         update_params.delete 'hide_results'
       end
@@ -111,8 +137,39 @@ module Api::V1::Quiz
     # show_correct_answers is valid if hide_results is null
     if update_params.has_key?('show_correct_answers')
       hide_results = update_params.fetch('hide_results', quiz.hide_results)
+
       unless hide_results.blank?
         update_params.delete 'show_correct_answers'
+      end
+    end
+
+    begin
+      show_correct_answers = parse_tribool update_params.fetch('show_correct_answers', quiz.show_correct_answers)
+
+      # The following fields are valid only if `show_correct_answers` is true:
+      if show_correct_answers == false
+        %w[ show_correct_answers_at hide_correct_answers_at ].each do |key|
+          update_params.delete(key) if update_params.has_key?(key)
+        end
+      end
+
+      # show_correct_answers_last_attempt is valid only if
+      # show_correct_answers=true and allowed_attempts > 1
+      if update_params.has_key?('show_correct_answers_last_attempt')
+        allowed_attempts = update_params.fetch('allowed_attempts', quiz.allowed_attempts).to_i
+
+        if show_correct_answers == false || allowed_attempts <= 1
+          update_params.delete 'show_correct_answers_last_attempt'
+        end
+      end
+    end
+
+    # one_time_results is valid if hide_results is null
+    if update_params.has_key?('one_time_results')
+      hide_results = update_params.fetch('hide_results', quiz.hide_results)
+
+      unless hide_results.blank?
+        update_params.delete 'one_time_results'
       end
     end
 
@@ -127,8 +184,18 @@ module Api::V1::Quiz
     # cant_go_back is valid if one_question_at_a_time=true
     if update_params.has_key?('cant_go_back')
       one_question_at_a_time = update_params.fetch('one_question_at_a_time', quiz.one_question_at_a_time)
+
       unless one_question_at_a_time
         update_params.delete 'one_question_at_a_time'
+      end
+    end
+
+    # discard time limit if it's a negative value
+    if update_params.has_key?('time_limit')
+      time_limit = update_params.fetch('time_limit', quiz.time_limit)
+
+      if time_limit && time_limit.to_i < 0
+        update_params.delete 'time_limit'
       end
     end
 
@@ -138,11 +205,27 @@ module Api::V1::Quiz
       if quiz.new_record?
         quiz.save
       end
-      quiz.workflow_state = Canvas::Plugin.value_to_boolean(published) ? 'available' : 'unpublished'
+      if Canvas::Plugin.value_to_boolean(published)
+        quiz.publish
+      else
+        quiz.unpublish
+      end
     end
     quiz.save if save
 
     quiz
   end
 
+  protected
+
+  # nil, "null" => nil
+  # false, "false" => false
+  # true, "true" => true
+  def parse_tribool(value)
+    if value.nil? || value.to_s == 'null'
+      nil
+    else
+      Canvas::Plugin.value_to_boolean(value)
+    end
+  end
 end

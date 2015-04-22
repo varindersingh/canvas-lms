@@ -95,18 +95,15 @@ define [
     toggleActionsForSelectedDiscussions: =>
       selectedTopics = @selectedTopics()
       atLeastOneSelected = selectedTopics.length > 0
-      $actions = @$('#actionsForSelectedDiscussions').toggle atLeastOneSelected
+      $actions = @$('#actionsForSelectedDiscussions')
       if atLeastOneSelected
+        $actions.removeClass 'screenreader-only'
+        $actions.find('button,input').prop('disabled', false)
         checkLock = _.any selectedTopics, (model) -> model.get('locked')
-        $actions.find('#lock').prop('checked', checkLock).button
-          text: false
-          icons:
-            primary: 'ui-icon-locked'
-        $actions.find('#delete').button
-          text: false
-          icons:
-            primary: 'ui-icon-trash'
         $actions.buttonset()
+      else
+        $actions.addClass 'screenreader-only'
+        $actions.find('button,input').prop('disabled', true)
 
     toggleLockingSelectedTopics: ->
       lock = @$('#lock').is(':checked')

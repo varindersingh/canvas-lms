@@ -24,6 +24,10 @@ module SIS
         row.include?('account_id') && row.include?('parent_account_id')
       end
 
+      def self.identifying_fields
+        %w[account_id].freeze
+      end
+
       # expected columns
       # account_id,parent_account_id
       def process(csv)
@@ -33,7 +37,7 @@ module SIS
 
             begin
               importer.add_account(row['account_id'], row['parent_account_id'],
-                  row['status'], row['name'])
+                  row['status'], row['name'], row['integration_id'])
             rescue ImportError => e
               add_warning(csv, "#{e}")
             end

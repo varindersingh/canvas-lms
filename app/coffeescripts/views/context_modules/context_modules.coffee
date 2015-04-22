@@ -4,6 +4,10 @@ define [
   'i18n!context_modules'
   'jquery.loadingImg'
 ], (Backbone, $, I18n) ->
+  ###
+  xsslint jqueryObject.identifier dragItem dragModule
+  ###
+
   class ContextModules extends Backbone.View
     @optionProperty 'modules'
 
@@ -112,6 +116,7 @@ define [
     itemSelector: "table.context_module_item"
 
     initialize: ->
+      super
       @$contextModules = $("#context_modules")
       @$contextModules.parent().on 'keydown', @onKeyDown
 

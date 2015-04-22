@@ -24,15 +24,15 @@ describe Canvas::ICU do
       it "should work" do
         array = [{id: 2, str: 'a'}, {id:1, str: 'b'}]
         result = Canvas::ICU.collate_by(array) { |x| x[:str] }
-        result.first[:id].should == 2
-        result.last[:id].should == 1
+        expect(result.first[:id]).to eq 2
+        expect(result.last[:id]).to eq 1
       end
 
-      it "should handle SortFirst" do
-        array = [{id: 2, str: SortFirst}, {id:1, str: 'b'}]
+      it "should handle CanvasSort::First" do
+        array = [{id: 2, str: CanvasSort::First}, {id:1, str: 'b'}]
         result = Canvas::ICU.collate_by(array) { |x| x[:str] }
-        result.first[:id].should == 2
-        result.last[:id].should == 1
+        expect(result.first[:id]).to eq 2
+        expect(result.last[:id]).to eq 1
       end
     end
 
@@ -40,41 +40,45 @@ describe Canvas::ICU do
       it "should return something that's comparable" do
         a = "a"; b = "b"
         a_prime = Canvas::ICU.collation_key(a)
-        a.object_id.should_not == a_prime.object_id
+        expect(a.object_id).not_to eq a_prime.object_id
         b_prime = Canvas::ICU.collation_key(b)
-        (a_prime <=> b_prime).should == -1
+        expect(a_prime <=> b_prime).to eq -1
       end
 
-      it "should pass-thru SortFirst" do
-        Canvas::ICU.collation_key(SortFirst).should == SortFirst
+      it "should pass-thru CanvasSort::First" do
+        expect(Canvas::ICU.collation_key(CanvasSort::First)).to eq CanvasSort::First
       end
     end
 
     describe ".compare" do
       it "should work" do
-        Canvas::ICU.compare("a", "b").should == -1
+        expect(Canvas::ICU.compare("a", "b")).to eq -1
       end
 
-      it "should handle SortFirst" do
-        Canvas::ICU.compare(SortFirst, "a").should == -1
+      it "should handle CanvasSort::First" do
+        expect(Canvas::ICU.compare(CanvasSort::First, "a")).to eq -1
       end
     end
 
     describe ".collate" do
       it "should work" do
-        Canvas::ICU.collate(["b", "a"]).should == ["a", "b"]
+        expect(Canvas::ICU.collate(["b", "a"])).to eq ["a", "b"]
       end
 
       it "should at the least be case insensitive" do
         results = Canvas::ICU.collate(["b", "a", "A", "B"])
-        results[0..1].sort.should == ["a", "A"].sort
-        results[2..3].sort.should == ["b", "B"].sort
+        expect(results[0..1].sort).to eq ["a", "A"].sort
+        expect(results[2..3].sort).to eq ["b", "B"].sort
+      end
+
+      it "should not ignore punctuation" do
+        expect(Canvas::ICU.collate(["ab, cd", "a, bcd"])).to eq ["a, bcd", "ab, cd"]
       end
     end
   end
 
   context "NaiveCollator" do
-    it_should_behave_like "Collator"
+    include_examples "Collator"
 
     before do
       Canvas::ICU.stubs(:collator).returns(Canvas::ICU::NaiveCollator)
@@ -82,10 +86,10 @@ describe Canvas::ICU do
   end
 
   context "ICU" do
-    it_should_behave_like "Collator"
+    include_examples "Collator"
 
     before do
-      pending if Canvas::ICU.collator == Canvas::ICU::NaiveCollator
+      skip if Canvas::ICU.collator == Canvas::ICU::NaiveCollator
     end
   end
 end

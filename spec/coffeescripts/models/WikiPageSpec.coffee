@@ -29,6 +29,10 @@ define [
     wikiPage = new WikiPage {url: 'url'}, revision: 42
     equal wikiPage.latestRevision().get('revision_id'), 42, 'revision passed to latestRevision'
 
+  test 'wiki page passed to latestRevision', ->
+    wikiPage = new WikiPage {url: 'url'}
+    equal wikiPage.latestRevision().page, wikiPage, 'wiki page passed to latestRevision'
+
   test 'latestRevision should be marked as latest', ->
     wikiPage = new WikiPage {url: 'url'}
     equal wikiPage.latestRevision().latest, true, 'marked as latest'
@@ -59,22 +63,6 @@ define [
 
 
   module 'WikiPage:Sync'
-  test 'sets the id during construction', ->
-    wikiPage = new WikiPage wikiPageObj()
-    equal wikiPage.get('url'), 'front-page-2'
-    equal wikiPage.get('id'), wikiPage.get('url'), 'Sets id to url'
-
-  test 'sets the id during parse', ->
-    wikiPage = new WikiPage
-    parseResponse = wikiPage.parse(wikiPageObj())
-    equal parseResponse.url, 'front-page-2'
-    equal parseResponse.id, parseResponse.url, 'Sets id to url'
-
-  test 'removes the id during toJSON', ->
-    wikiPage = new WikiPage wikiPageObj()
-    json = wikiPage.toJSON()
-    equal json.id, undefined, 'Removes id from serialized json'
-
   test 'parse removes wiki_page namespace added by api', ->
     wikiPage = new WikiPage
     namespacedObj = {}

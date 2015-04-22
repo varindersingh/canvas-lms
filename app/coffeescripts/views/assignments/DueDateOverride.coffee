@@ -4,11 +4,11 @@ define [
   'jst/assignments/DueDateOverride'
   'compiled/models/AssignmentOverride'
   'i18n!overrides'
-], (Backbone, _, template, AssignmentOverride,I18n) ->
+], (Backbone, _, template, AssignmentOverride, I18n) ->
 
   # Class Summary
   #   Holds a list of Due Dates and adds items to the collection
-  #   when the user creates a new due date. 
+  #   when the user creates a new due date.
   class DueDateOverrideView extends Backbone.View
 
     template: template
@@ -21,6 +21,8 @@ define [
     initialize: ->
       super
       @model.overrides.on 'remove', @showAddDueDateButton
+      @model.overrides.on 'remove', @toggleUnassignedWarning
+      @model.overrides.on 'add', @toggleUnassignedWarning
 
     # Method Summary
     #   Adds a new due date to the collection of due dates
@@ -43,9 +45,17 @@ define [
     # never need to cover all the sections AND everyone else
     shouldHideDueDate: => @model.availableSections().length <= 1
 
+    toggleUnassignedWarning: =>
+      @$el.find("#unassigned_warning").toggle(@needsUnassignedWarning())
+
+    needsUnassignedWarning: =>
+      return false unless @model.onlyVisibleToOverrides()
+      !(@model.overrides.length)
+
     toJSON: =>
       json = super
       json.shouldHideDueDate = @shouldHideDueDate()
+      json.needsUnassignedWarning = @needsUnassignedWarning()
       json
 
     updateOverrides: =>

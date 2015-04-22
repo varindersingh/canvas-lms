@@ -38,16 +38,16 @@ class ErrorsController < ApplicationController
       @reports = @reports.where(:category => params[:category])
     end
 
-    @reports = @reports.paginate(:per_page => PER_PAGE, :page => params[:page], :order => 'id DESC', :without_count => true)
+    @reports = @reports.order('created_at DESC').paginate(:per_page => PER_PAGE, :page => params[:page], :total_entries => nil)
   end
 
   def show
     @reports = [ErrorReport.find(params[:id])]
-    render :action => 'index'
+    render :index
   end
 
   def error_search_enabled?
-    Setting.get_cached("error_search_enabled", "true") == "true"
+    Setting.get("error_search_enabled", "true") == "true"
   end
   helper_method :error_search_enabled?
 end

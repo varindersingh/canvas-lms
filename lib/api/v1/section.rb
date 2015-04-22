@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2011 Instructure, Inc.
+# Copyright (C) 2011 - 2014 Instructure, Inc.
 #
 # This file is part of Canvas.
 #
@@ -18,11 +18,17 @@
 
 module Api::V1::Section
   include Api::V1::Json
+  include Api::V1::PostGradesStatus
 
   def section_json(section, user, session, includes)
     res = section.as_json(:include_root => false,
                           :only => %w(id name course_id nonxlist_course_id start_at end_at))
-    res['sis_section_id'] = section.sis_source_id
+    if section.root_account.grants_any_right?(user, :read_sis, :manage_sis)
+      res['sis_section_id'] = section.sis_source_id
+      res['sis_course_id'] = section.course.sis_source_id
+      res['integration_id'] = section.integration_id
+    end
+    res['sis_import_id'] = section.sis_batch_id if section.root_account.grants_right?(user, session, :manage_sis)
     if includes.include?('students')
       proxy = section.enrollments
       if user_json_is_admin?
@@ -30,9 +36,19 @@ module Api::V1::Section
       else
         proxy = proxy.includes(:user)
       end
+      include_enrollments = includes.include?('enrollments')
       res['students'] = proxy.where(:type => 'StudentEnrollment').
-        map { |e| user_json(e.user, user, session, includes) }
+        map { |e|
+          enrollments = include_enrollments ? [e] : nil
+          user_json(e.user, user, session, includes, @context, enrollments)
+        }
     end
+    res['total_students'] = section.students.count if includes.include?('total_students')
+
+    if includes.include?('passback_status')
+      res['passback_status'] = post_grades_status_json(section)
+    end
+
     res
   end
 end

@@ -7,8 +7,10 @@ define [
   'str/htmlEscape'
   'jst/discussions/_reply_attachment'
   'compiled/fn/preventDefault'
+  'compiled/views/editor/KeyboardShortcuts'
+  'str/stripTags'
   'tinymce.editor_box'
-], (Backbone, _, I18n, $, Entry, htmlEscape, replyAttachmentTemplate, preventDefault) ->
+], (Backbone, _, I18n, $, Entry, htmlEscape, replyAttachmentTemplate, preventDefault, KeyboardShortcuts, stripTags) ->
 
   class Reply
 
@@ -22,14 +24,23 @@ define [
       @discussionEntry = @el.closest '.discussion_entry'
       # required for non-threaded reply area at bottom of an entry block
       @discussionEntry = @el.closest '.entry' if @discussionEntry.length == 0
-      @form = @discussionEntry.find('form:first').submit preventDefault @submit
+      @form = @discussionEntry.find('form.discussion-reply-form:first').submit preventDefault @submit
       @textArea = @getEditingElement()
       @form.find('.cancel_button').click @hide
       @form.on 'click', '.toggle-wrapper a', (e) =>
         e.preventDefault()
         @textArea.editorBox('toggle')
+        # hide the clicked link, and show the other toggle link.
+        # todo: replace .andSelf with .addBack when JQuery is upgraded.
+        $(e.currentTarget).siblings('a').andSelf().toggle()
       @form.delegate '.alert .close', 'click', preventDefault @hideNotification
       @editing = false
+
+      _.defer(@attachKeyboardShortcuts)
+
+
+    attachKeyboardShortcuts: =>
+      @view.$('.toggle-wrapper').first().before((new KeyboardShortcuts()).render().$el)
 
     ##
     # Shows or hides the TinyMCE editor for a reply
@@ -48,8 +59,7 @@ define [
     edit: ->
       @form.addClass 'replying'
       @discussionEntry.addClass 'replying'
-      @textArea.editorBox tinyOptions: width: '100%'
-      setTimeout (=> @textArea.editorBox 'focus'), 20 if @options.focus
+      @textArea.editorBox focus: true, tinyOptions: width: '100%'
       @editing = true
       @trigger 'edit', this
 
@@ -65,6 +75,7 @@ define [
       @textArea.val @content
       @editing = false
       @trigger 'hide', this
+      @discussionEntry.find('.discussion-reply-action').focus()
 
     hideNotification: =>
       @view.model.set 'notification', ''
@@ -77,7 +88,7 @@ define [
     submit: =>
       @hide()
       @textArea._setContentCode ''
-      @view.model.set 'notification', "<div class='alert alert-info'>#{I18n.t 'saving_reply', 'Saving reply...'}</div>"
+      @view.model.set 'notification', "<div class='alert alert-info'>#{htmlEscape I18n.t 'saving_reply', 'Saving reply...'}</div>"
       entry = new Entry @getModelAttributes()
       entry.save null,
         success: @onPostReplySuccess
@@ -102,7 +113,7 @@ define [
       now = new Date().getTime()
       # TODO: remove this summary, server should send it in create response and no further
       # work is required
-      summary: $('<div/>').html(@content).text()
+      summary: stripTags(@content)
       message: @content
       parent_id: if @options.topLevel then null else @view.model.get 'id'
       user_id: ENV.current_user_id
@@ -132,19 +143,20 @@ define [
     # Adds an attachment
     addAttachment: ($el) ->
       @form.find('ul.discussion-reply-attachments').append(replyAttachmentTemplate())
+      @form.find('ul.discussion-reply-attachments input').focus()
       @form.find('a.discussion-reply-add-attachment').hide() # TODO: when the data model allows it, tweak this to support multiple in the UI
 
     ##
     # Removes an attachment
     removeAttachment: ($el) ->
       $el.closest('ul.discussion-reply-attachments li').remove()
-      @form.find('a.discussion-reply-add-attachment').show()
+      @form.find('a.discussion-reply-add-attachment').show().focus()
 
     ##
     # Removes all attachments
     removeAttachments: ->
       @form.find('ul.discussion-reply-attachments').empty()
-      @form.find('a.discussion-reply-add-attachment').show()
+      @form.find('a.discussion-reply-add-attachment').show().focus()
 
   _.extend Reply.prototype, Backbone.Events
 

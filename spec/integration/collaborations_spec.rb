@@ -18,25 +18,38 @@
 
 require File.expand_path(File.dirname(__FILE__) + '/../spec_helper')
 
-describe CollaborationsController, :type => :integration do
+require 'nokogiri'
+
+describe CollaborationsController, type: :request do
 
   it 'should properly link to the user who posted the collaboration' do
     PluginSetting.create!(:name => 'etherpad', :settings => {})
     course_with_teacher_logged_in :active_all => true, :name => "teacher 1"
+
+    UserService.register(
+      :service => "google_docs",
+      :token => "token",
+      :secret => "secret",
+      :user => @user,
+      :service_domain => "google.com",
+      :service_user_id => "service_user_id",
+      :service_user_name => "service_user_name"
+    )
+
     get "/courses/#{@course.id}/collaborations/"
-    response.should be_success
+    expect(response).to be_success
 
     post "/courses/#{@course.id}/collaborations/", { :collaboration => { :collaboration_type => "EtherPad", :title => "My Collab" } }
-    response.should be_redirect
+    expect(response).to be_redirect
 
     get "/courses/#{@course.id}/collaborations/"
-    response.should be_success
+    expect(response).to be_success
 
     html = Nokogiri::HTML(response.body)
     links = html.css("div.collaboration_#{Collaboration.last.id} a.collaborator_link")
-    links.count.should == 1
+    expect(links.count).to eq 1
     link = links.first
-    link.attr("href").should == "/courses/#{@course.id}/users/#{@teacher.id}"
-    link.text.should == "teacher 1"
+    expect(link.attr("href")).to eq "/courses/#{@course.id}/users/#{@teacher.id}"
+    expect(link.text).to eq "teacher 1"
   end
 end

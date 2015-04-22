@@ -18,13 +18,13 @@
 
 require File.expand_path(File.dirname(__FILE__) + '/../api_spec_helper')
 
-describe 'CommunicationChannels API', :type => :integration do
+describe 'CommunicationChannels API', type: :request do
   describe 'index' do
-    before do
+    before :once do
       @someone = user_with_pseudonym
       @admin   = user_with_pseudonym
 
-      Account.site_admin.add_user(@admin)
+      Account.site_admin.account_users.create!(user: @admin)
 
       @path = "/api/v1/users/#{@someone.id}/communication_channels"
       @path_options = { :controller => 'communication_channels',
@@ -36,7 +36,7 @@ describe 'CommunicationChannels API', :type => :integration do
         json = api_call(:get, @path, @path_options)
 
         cc = @someone.communication_channel
-        json.should eql [{
+        expect(json).to eql [{
           'id'       => cc.id,
           'address'  => cc.path,
           'type'     => cc.path_type,
@@ -50,7 +50,7 @@ describe 'CommunicationChannels API', :type => :integration do
       it 'should return 401' do
         user_with_pseudonym
         raw_api_call(:get, @path, @path_options)
-        response.code.should eql '401'
+        expect(response.code).to eql '401'
       end
 
       it "should not list channels for a teacher's students" do
@@ -59,19 +59,19 @@ describe 'CommunicationChannels API', :type => :integration do
         @user = @teacher
 
         raw_api_call(:get, @path, @path_options)
-        response.code.should eql '401'
+        expect(response.code).to eql '401'
       end
     end
   end
 
   describe 'create' do
-    before do
+    before :once do
       @someone    = user_with_pseudonym
       @admin      = user_with_pseudonym
       @site_admin = user_with_pseudonym
 
-      Account.site_admin.add_user(@site_admin)
-      Account.default.add_user(@admin)
+      Account.site_admin.account_users.create!(user: @site_admin)
+      Account.default.account_users.create!(user: @admin)
 
       @path = "/api/v1/users/#{@someone.id}/communication_channels"
       @path_options = { :controller => 'communication_channels',
@@ -87,14 +87,14 @@ describe 'CommunicationChannels API', :type => :integration do
 
       @channel = CommunicationChannel.find(json['id'])
 
-      json.should == {
+      expect(json).to eq({
         'id' => @channel.id,
         'address' => 'new+api@example.com',
         'type' => 'email',
         'workflow_state' => 'active',
         'user_id' => @someone.id,
         'position' => 2
-      }
+      })
     end
 
     context 'a site admin' do
@@ -105,7 +105,7 @@ describe 'CommunicationChannels API', :type => :integration do
           :skip_confirmation => 1 }))
 
         @channel = CommunicationChannel.find(json['id'])
-        @channel.should be_active
+        expect(@channel).to be_active
       end
     end
 
@@ -117,23 +117,31 @@ describe 'CommunicationChannels API', :type => :integration do
 
         @channel = CommunicationChannel.find(json['id'])
 
-        json.should == {
+        expect(json).to eq({
           'id' => @channel.id,
           'address' => 'new+api@example.com',
           'type' => 'email',
           'workflow_state' => 'unconfirmed',
           'user_id' => @someone.id,
           'position' => 2
-        }
+        })
       end
 
-      it 'should not be able to auto-validate channels' do
-        json = api_call(:post, @path, @path_options, @post_params.merge({
-          :skip_confirmation => 1 }))
+      it 'should be able to create new channels for other users and auto confirm' do
+        json = api_call(:post, @path, @path_options, @post_params.merge({:skip_confirmation => 1}))
 
         @channel = CommunicationChannel.find(json['id'])
-        @channel.should be_unconfirmed
+
+        expect(json).to eq({
+          'id' => @channel.id,
+          'address' => 'new+api@example.com',
+          'type' => 'email',
+          'workflow_state' => 'active',
+          'user_id' => @someone.id,
+          'position' => 2
+        })
       end
+
     end
 
     context 'a user' do
@@ -149,62 +157,118 @@ describe 'CommunicationChannels API', :type => :integration do
         raw_api_call(:post, "/api/v1/users/#{@admin.id}/communication_channels",
           @path_options.merge(:user_id => @admin.to_param), @post_params)
 
-        response.code.should eql '401'
+        expect(response.code).to eql '401'
+      end
+
+      context 'push' do
+        before { @post_params.merge!(communication_channel: {token: 'registration_token', type: 'push'}) }
+
+        it 'should complain about sns not being configured' do
+          raw_api_call(:post, @path, @path_options, @post_params)
+
+          expect(response.code).to eql '400'
+        end
+
+        it "should work" do
+          client = mock()
+          sns = mock()
+          sns.stubs(:client).returns(client)
+          DeveloperKey.stubs(:sns).returns(sns)
+          dk = DeveloperKey.default
+          dk.sns_arn = 'apparn'
+          dk.save!
+          $spec_api_tokens[@user] = @user.access_tokens.create!(developer_key: dk).full_token
+          client.expects(:create_platform_endpoint).once.returns(endpoint_arn: 'endpointarn')
+
+          json = api_call(:post, @path, @path_options, @post_params)
+          expect(json['type']).to eq 'push'
+          expect(json['workflow_state']).to eq 'active'
+          expect(@user.notification_endpoints.first.arn).to eq 'endpointarn'
+        end
       end
     end
   end
 
   describe 'destroy' do
-    before do
-      @someone = user_with_pseudonym
-      @admin   = user_with_pseudonym
-      @channel = @someone.communication_channel
-
-      Account.default.add_user(@admin)
-
-      @path = "/api/v1/users/#{@someone.id}/communication_channels/#{@channel.id}"
-      @path_options = { :controller => 'communication_channels',
-        :action => 'destroy', :user_id => @someone.to_param, :format => 'json',
-        :id => @channel.to_param }
+    let_once(:someone) { user_with_pseudonym }
+    let_once(:admin) do
+      user = user_with_pseudonym
+      Account.default.account_users.create!(user: user)
+      user
+    end
+    let_once(:channel) { someone.communication_channel }
+    let(:path) {"/api/v1/users/#{someone.id}/communication_channels/#{channel.id}"}
+    let(:path_options) do
+      { :controller => 'communication_channels',
+        :action => 'destroy', :user_id => someone.to_param, :format => 'json',
+        :id => channel.to_param }
     end
 
     context 'an admin' do
-      it "should be able to delete others' channels" do
-        json = api_call(:delete, @path, @path_options)
+      before(:each) { @user = admin }
 
-        json.should == {
+      it "should be able to delete others' channels" do
+        json = api_call(:delete, path, path_options)
+
+        expect(json).to eq({
           'position' => 1,
-          'address' => 'nobody@example.com',
-          'id' => @channel.id,
+          'address' => channel.path,
+          'id' => channel.id,
           'workflow_state' => 'retired',
-          'user_id' => @someone.id,
+          'user_id' => someone.id,
           'type' => 'email'
-        }
+        })
       end
     end
 
     context 'a user' do
-      before { @user = @someone }
+      before(:each) { @user = someone }
 
       it 'should be able to delete its own channels' do
-        json = api_call(:delete, @path, @path_options)
+        json = api_call(:delete, path, path_options)
 
-        json.should == {
+        expect(json).to eq({
           'position' => 1,
-          'address' => 'nobody@example.com',
-          'id' => @channel.id,
+          'address' => channel.path,
+          'id' => channel.id,
           'workflow_state' => 'retired',
-          'user_id' => @someone.id,
+          'user_id' => someone.id,
           'type' => 'email'
-        }
+        })
+      end
+
+      it "should 404 if already deleted" do
+        api_call(:delete, path, path_options)
+        raw_api_call(:delete, path, path_options)
+        expect(response.code).to eq '404'
       end
 
       it "should not be able to delete others' channels" do
-        @channel = @admin.communication_channel
-        raw_api_call(:delete, "/api/v1/users/#{@admin.id}/communication_channels/#{@channel.id}",
-          @path_options.merge(:user_id => @admin.to_param, :id => @channel.to_param))
+        admin_channel = admin.communication_channel
+        raw_api_call(:delete, "/api/v1/users/#{admin.id}/communication_channels/#{admin_channel.id}",
+                     path_options.merge(:user_id => admin.to_param, :id => admin_channel.to_param))
 
-        response.code.should eql '401'
+        expect(response.code).to eql '401'
+      end
+
+      it "should be able to delete by path, instead of id" do
+        api_call(:delete, "/api/v1/users/#{someone.id}/communication_channels/#{channel.path_type}/#{URI.escape(channel.path)}",
+                 :controller => 'communication_channels',
+                 :action => 'destroy', :user_id => someone.to_param, :format => 'json',
+                 :type => channel.path_type, :address => channel.path)
+        expect(CommunicationChannel.find(channel.id)).to be_retired # for some reason, .reload on a let() bound model returns nil
+      end
+
+      it "should 404 if already deleted by path" do
+        api_call(:delete, "/api/v1/users/#{someone.id}/communication_channels/#{channel.path_type}/#{URI.escape(channel.path)}",
+                 :controller => 'communication_channels',
+                 :action => 'destroy', :user_id => someone.to_param, :format => 'json',
+                 :type => channel.path_type, :address => channel.path)
+        raw_api_call(:delete, "/api/v1/users/#{someone.id}/communication_channels/#{channel.path_type}/#{URI.escape(channel.path)}",
+                     :controller => 'communication_channels',
+                     :action => 'destroy', :user_id => someone.to_param, :format => 'json',
+                     :type => channel.path_type, :address => channel.path)
+        expect(response.code).to eq '404'
       end
     end
   end

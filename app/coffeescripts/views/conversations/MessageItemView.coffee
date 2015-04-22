@@ -1,9 +1,12 @@
 define [
   'i18n!conversations'
+  'jquery'
   'underscore'
+  'timezone'
   'Backbone'
   'jst/conversations/messageItem'
-], (I18n, _, {View}, template) ->
+  'jst/_avatar' # needed by messageItem template
+], (I18n, $, _, tz, {View}, template) ->
 
   class MessageItemView extends View
 
@@ -41,7 +44,10 @@ define [
     #
     # Returns the model's "conversation" key object.
     toJSON: ->
-      @model.toJSON()
+      json = @model.toJSON()
+      fudged = $.fudgeDateForProfileTimezone(tz.parse(json.created_at))
+      _.extend json,
+        created_at: fudged
 
     # Internal: Update participant lists after render.
     #

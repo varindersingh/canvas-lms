@@ -96,7 +96,7 @@ define [
 
   test 'there is no button when next or prev data is null', ->
     @server.respondWith "GET", 
-                        "/api/v1/courses/42/module_item_sequence?asset_type=Assignment&asset_id=123",
+                        "/api/v1/courses/42/module_item_sequence?asset_type=Assignment&asset_id=123&frame_external_urls=true",
                         [
                           200, { "Content-Type": "application/json" }, JSON.stringify(nullButtonData)
                         ]
@@ -105,7 +105,7 @@ define [
 
     ok @$testEl.find('a').length == 0, 'no buttons rendered'
 
-  moduleTooltipData = 
+  moduleTooltipData =
      {
        items:
          [
@@ -151,18 +151,18 @@ define [
          ]
      }
   test 'buttons show modules tooltip when current module id != next or prev module id', ->
-    @server.respondWith "GET", 
-                        "/api/v1/courses/42/module_item_sequence?asset_type=Assignment&asset_id=123",
+    @server.respondWith "GET",
+                        "/api/v1/courses/42/module_item_sequence?asset_type=Assignment&asset_id=123&frame_external_urls=true",
                         [
                           200, { "Content-Type": "application/json" }, JSON.stringify(moduleTooltipData)
                         ]
     @$testEl.moduleSequenceFooter({courseID: 42, assetType: 'Assignment', assetID: 123})
     @server.respond()
 
-    ok this.$testEl.find('a').first().data('tooltip-title').match('Module C'), "displays previous module tooltip"
-    ok this.$testEl.find('a').last().data('tooltip-title').match('Module B'), "displays next module tooltip"
+    ok this.$testEl.find('a').first().data('html-tooltip-title').match('Module C'), "displays previous module tooltip"
+    ok this.$testEl.find('a').last().data('html-tooltip-title').match('Module B'), "displays next module tooltip"
 
-  itemTooltipData = 
+  itemTooltipData =
      {
        items:
          [
@@ -201,20 +201,20 @@ define [
      }
 
   test 'buttons show item tooltip when current module id == next or prev module id', ->
-    @server.respondWith "GET", 
-                        "/api/v1/courses/42/module_item_sequence?asset_type=Assignment&asset_id=123",
+    @server.respondWith "GET",
+                        "/api/v1/courses/42/module_item_sequence?asset_type=Assignment&asset_id=123&frame_external_urls=true",
                         [
                           200, { "Content-Type": "application/json" }, JSON.stringify(itemTooltipData)
                         ]
     @$testEl.moduleSequenceFooter({courseID: 42, assetType: 'Assignment', assetID: 123})
     @server.respond()
 
-    ok this.$testEl.find('a').first().data('tooltip-title').match('Project 1'), "displays previous item tooltip"
-    ok this.$testEl.find('a').last().data('tooltip-title').match('Project 33'), "displays next item tooltip"
+    ok this.$testEl.find('a').first().data('html-tooltip-title').match('Project 1'), "displays previous item tooltip"
+    ok this.$testEl.find('a').last().data('html-tooltip-title').match('Project 33'), "displays next item tooltip"
 
   test 'if url has a module_item_id use that as the assetID and ModuleItem as the type instead', ->
-    @server.respondWith "GET", 
-                        "/api/v1/courses/42/module_item_sequence?asset_type=ModuleItem&asset_id=999",
+    @server.respondWith "GET",
+                        "/api/v1/courses/42/module_item_sequence?asset_type=ModuleItem&asset_id=999&frame_external_urls=true",
                         [
                           200, { "Content-Type": "application/json" }, JSON.stringify({})
                         ]
@@ -225,7 +225,7 @@ define [
   test 'show gets called when rendering', ->
     @sandbox.stub(@$testEl, 'show')
     @server.respondWith "GET",
-                        "/api/v1/courses/42/module_item_sequence?asset_type=Assignment&asset_id=123",
+                        "/api/v1/courses/42/module_item_sequence?asset_type=Assignment&asset_id=123&frame_external_urls=true",
                         [
                           200, { "Content-Type": "application/json" }, JSON.stringify(itemTooltipData)
                         ]

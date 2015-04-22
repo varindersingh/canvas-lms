@@ -1,9 +1,40 @@
 define [
   'compiled/models/Assignment'
+  'compiled/models/Submission'
   'compiled/models/DateGroup'
-], (Assignment, DateGroup) ->
+  'helpers/fakeENV'
+], (Assignment, Submission, DateGroup, fakeENV) ->
 
-  module "Assignment"
+  module "Assignment#initialize with ENV.POST_TO_SIS set to false",
+    setup: ->
+      fakeENV.setup
+        POST_TO_SIS: false
+    teardown: -> fakeENV.teardown()
+
+  test "must not alter the post_to_sis field", ->
+    assignment = new Assignment
+    strictEqual assignment.get('post_to_sis'), undefined
+
+  module "Assignment#initalize with ENV.POST_TO_SIS set to true",
+    setup: ->
+      fakeENV.setup
+        POST_TO_SIS: true
+    teardown: -> fakeENV.teardown()
+
+  test "must default post_to_sis to true for a new assignment", ->
+    assignment = new Assignment
+    strictEqual assignment.get('post_to_sis'), true
+
+  test "must leave a false value as is", ->
+    assignment = new Assignment {post_to_sis: false}
+    strictEqual assignment.get('post_to_sis'), false
+
+  test "must leave a null value as is for an existing assignment", ->
+    assignment = new Assignment {
+      id: '1234',
+      post_to_sis: null
+    }
+    strictEqual assignment.get('post_to_sis'), null
 
   module "Assignment#isQuiz"
 
@@ -213,19 +244,72 @@ define [
   module "Assignment#submissionType"
 
   test "returns 'none' if record's submission_types is ['none']", ->
-    assignment = new Assignment name: 'foo'
+    assignment = new Assignment name: 'foo', id: '12'
     assignment.set 'submission_types', [ 'none' ]
     deepEqual assignment.submissionType(), 'none'
 
   test "returns 'on_paper' if record's submission_types includes on_paper", ->
-    assignment = new Assignment name: 'foo'
+    assignment = new Assignment name: 'foo', id: '13'
     assignment.set 'submission_types', [ 'on_paper' ]
     deepEqual assignment.submissionType(), 'on_paper'
 
   test "returns online submission otherwise", ->
-    assignment = new Assignment name: 'foo'
+    assignment = new Assignment name: 'foo', id: '14'
     assignment.set 'submission_types', [ 'online_upload' ]
     deepEqual assignment.submissionType(), 'online'
+
+  module "Assignment#expectsSubmission"
+
+  test "returns false if assignment submission type is not online", ->
+    assignment = new Assignment name: 'foo'
+    assignment.set 'submission_types': [ 'external_tool', 'on_paper' ]
+    deepEqual assignment.expectsSubmission(), false
+
+  test "returns true if an assignment submission type is online", ->
+    assignment = new Assignment name: 'foo'
+    assignment.set 'submission_types': [ 'online' ]
+    deepEqual assignment.expectsSubmission(), true
+
+  module "Assignment#allowedToSubmit"
+
+  test "returns false if assignment is locked", ->
+    assignment = new Assignment name: 'foo'
+    assignment.set 'submission_types': [ 'online' ]
+    assignment.set 'locked_for_user': true
+    deepEqual assignment.allowedToSubmit(), false
+
+  test "returns true if an assignment is not locked", ->
+    assignment = new Assignment name: 'foo'
+    assignment.set 'submission_types': [ 'online' ]
+    assignment.set 'locked_for_user': false
+    deepEqual assignment.allowedToSubmit(), true
+
+  test "returns false if a submission is not expected", ->
+    assignment = new Assignment name: 'foo'
+    assignment.set 'submission_types': [ 'external_tool', 'on_paper', 'attendance' ]
+    deepEqual assignment.allowedToSubmit(), false
+
+  module "Assignment#withoutGradedSubmission"
+
+  test "returns false if there is a submission", ->
+    assignment = new Assignment name: 'foo'
+    assignment.set 'submission': new Submission {'submission_type': 'online'}
+    deepEqual assignment.withoutGradedSubmission(), false
+
+  test "returns true if there is no submission", ->
+    assignment = new Assignment name: 'foo'
+    assignment.set 'submission': null
+    deepEqual assignment.withoutGradedSubmission(), true
+
+  test "returns true if there is a submission, but no grade", ->
+    assignment = new Assignment name: 'foo'
+    assignment.set 'submission': new Submission
+    deepEqual assignment.withoutGradedSubmission(), true
+
+  test "returns false if there is a submission and a grade", ->
+    assignment = new Assignment name: 'foo'
+    assignment.set 'submission': new Submission {'grade': 305}
+    deepEqual assignment.withoutGradedSubmission(), false
 
   module "Assignment#acceptsOnlineUpload"
 
@@ -238,7 +322,7 @@ define [
     assignment = new Assignment name: 'foo'
     assignment.set 'submission_types', []
     deepEqual assignment.acceptsOnlineUpload(), false
-  
+
   module "Assignment#acceptsOnlineURL"
 
   test "returns true if assignment allows online url", ->
@@ -331,6 +415,32 @@ define [
     assignment = new Assignment
     deepEqual assignment.allDates(), []
 
+  module "Assignment#singleSectionDueDate",
+    setup: -> fakeENV.setup()
+    teardown: -> fakeENV.teardown()
+
+  test "gets the due date for section instead of null", ->
+    dueAt = new Date("2013-11-27T11:01:00Z")
+    assignment = new Assignment all_dates: [
+      {due_at: null, title: "Everyone"},
+      {due_at: dueAt, title: "Summer"}
+    ]
+    false_stub = sinon.stub assignment, "multipleDueDates"
+    false_stub.returns false
+    deepEqual assignment.singleSectionDueDate(), dueAt.toISOString()
+    false_stub.restore()
+
+  test "returns due_at when only one date/section are present", ->
+    date = Date.now()
+    assignment = new Assignment name: 'Taco party!'
+    assignment.set 'due_at', date
+    deepEqual assignment.singleSectionDueDate(), assignment.dueAt()
+
+    # For students
+    ENV.PERMISSIONS = { manage: false }
+    deepEqual assignment.singleSectionDueDate(), assignment.dueAt()
+    ENV.PERMISSIONS = {}
+
   module "Assignment#toView"
 
   test "returns the assignment's name", ->
@@ -415,7 +525,7 @@ define [
     deepEqual json.acceptsMediaRecording, true
 
   test "includes submissionType", ->
-    assignment = new Assignment name: 'foo'
+    assignment = new Assignment name: 'foo', id: '16'
     assignment.set 'submission_types', [ 'on_paper' ]
     json = assignment.toView()
     deepEqual json.submissionType, 'on_paper'
@@ -457,6 +567,18 @@ define [
     assignment = new Assignment all_dates: [{title: "Summer"}, {title: "Winter"}]
     json = assignment.toView()
     equal json.allDates.length, 2
+
+  test "includes singleSectionDueDate", ->
+    dueAt = new Date("2013-11-27T11:01:00Z")
+    assignment = new Assignment all_dates: [
+      {due_at: null, title: "Everyone"},
+      {due_at: dueAt, title: "Summer"}
+    ]
+    false_stub = sinon.stub assignment, "multipleDueDates"
+    false_stub.returns false
+    json = assignment.toView()
+    equal json.singleSectionDueDate, dueAt.toISOString()
+    false_stub.restore()
 
   test "includes isQuiz", ->
     assignment = new Assignment("submission_types":["online_quiz"])

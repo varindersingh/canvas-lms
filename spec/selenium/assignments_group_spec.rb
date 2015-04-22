@@ -1,498 +1,292 @@
 require File.expand_path(File.dirname(__FILE__) + '/common')
+require File.expand_path(File.dirname(__FILE__) + '/helpers/assignments_common')
 
 describe "assignment groups" do
-  it_should_behave_like "in-process server selenium tests"
+  include_examples "in-process server selenium tests"
 
   def get_assignment_groups
-    ff('#groups .assignment_group')
+    ff('.assignment_group')
   end
 
   before (:each) do
+    @domain_root_account = Account.default
     course_with_teacher_logged_in
+    @course.require_assignment_group
+    @assignment_group = @course.assignment_groups.first
+    @course.assignments.create(:name => "test", :assignment_group => @assignment_group)
   end
 
-  it "should create an assignment group" do
+  it "should create a new assignment group" do
     get "/courses/#{@course.id}/assignments"
+    wait_for_ajaximations
 
+    f("#addGroup").click
     wait_for_ajaximations
-    f('#right-side .add_group_link').click
-    f('#assignment_group_name').send_keys('test group')
-    submit_form('#add_group_form')
+
+    replace_content(f("#ag_new_name"), "Second AG")
+    fj('.create_group:visible').click
     wait_for_ajaximations
-    f('#add_group_form').should_not be_displayed
-    f('#groups .assignment_group').should include_text('test group')
+
+    expect(ff('.assignment_group .ig-header h2').map(&:text)).to include("Second AG")
   end
 
+  it "should default to proper group when using group's inline add assignment button" do
+    @course.require_assignment_group
+    ag = @course.assignment_groups.create!(:name => "Pamplemousse")
 
-  it "should edit group details" do
+    get "/courses/#{@course.id}/assignments"
+    wait_for_ajaximations
+
+    f("#assignment_group_#{ag.id} .add_assignment").click
+
+    wait_for_ajaximations
+    fj('.more_options:visible').click
+    wait_for_ajaximations
+
+    expect(get_value("#assignment_group_id")).to eq ag.id.to_s
+  end
+
+  #Per selenium guidelines, we should not test buttons navigating to a page
+  # We could test that the page loads with the correct info from the params elsewhere
+  it "should remember entered settings when 'more options' is pressed" do
+    ag2 = @course.assignment_groups.create!(:name => "blah")
+
+    get "/courses/#{@course.id}/assignments"
+    wait_for_ajaximations
+
+    f("#assignment_group_#{ag2.id} .add_assignment").click
+    wait_for_ajaximations
+
+    replace_content(f("#ag_#{ag2.id}_assignment_name"), "Do this")
+    replace_content(f("#ag_#{ag2.id}_assignment_points"), "13")
+    expect_new_page_load { fj('.more_options:visible').click }
+
+    expect(get_value("#assignment_name")).to eq "Do this"
+    expect(get_value("#assignment_points_possible")).to eq "13"
+    expect(get_value("#assignment_group_id")).to eq ag2.id.to_s
+  end
+
+  it "should edit group details", :priority => "1" do
     assignment_group = @course.assignment_groups.create!(:name => "first test group")
+    4.times do
+      @course.assignments.create(:title => 'other assignment', :assignment_group => assignment_group)
+    end
     assignment = @course.assignments.create(:title => 'assignment with rubric', :assignment_group => assignment_group)
+
     get "/courses/#{@course.id}/assignments"
+    wait_for_ajaximations
 
     #edit group grading rules
-    driver.execute_script %{$('.edit_group_link:first').addClass('focus');}
-    f('.edit_group_link').click
+    f("#ag_#{assignment_group.id}_manage_link").click
+    fj(".edit_group:visible:first").click
+    #change the name
+    f("#ag_#{assignment_group.id}_name").clear
+    f("#ag_#{assignment_group.id}_name").send_keys('name change')
     #set number of lowest scores to drop
-    f('.add_rule_link').click
-    f('input.drop_count').send_keys('2')
+    f("#ag_#{assignment_group.id}_drop_lowest").clear
+    f("#ag_#{assignment_group.id}_drop_lowest").send_keys('1')
     #set number of highest scores to drop
-    f('.add_rule_link').click
-    click_option('.form_rules div:nth-child(2) select', 'Drop the Highest')
-    f('.form_rules div:nth-child(2) input').send_keys('3')
+    f("#ag_#{assignment_group.id}_drop_highest").clear
+    f("#ag_#{assignment_group.id}_drop_highest").send_keys('2')
     #set assignment to never drop
-    f('.add_rule_link').click
-    never_drop_css = '.form_rules div:nth-child(3) select'
-    click_option(never_drop_css, 'Never Drop')
+    fj('.add_never_drop:visible').click
+    keep_trying_until { fj('.never_drop_rule select').present? }
+    click_option('.never_drop_rule select', assignment.title)
+    #save it
+    fj('.create_group:visible').click
     wait_for_ajaximations
-    assignment_css = '.form_rules div:nth-child(3) .never_drop_assignment select'
-    keep_trying_until { f(assignment_css).displayed? }
-    click_option(assignment_css, assignment.title)
-    #delete second grading rule and save
-    f('.form_rules div:nth-child(2) a').click
-    submit_form('#add_group_form')
-
+    assignment_group.reload
     #verify grading rules
-    f('.more_info_link').click
-    f('.assignment_group .rule_details').should include_text('2')
-    f('.assignment_group .rule_details').should include_text('assignment with rubric')
+    expect(assignment_group.name).to match 'name change'
+    expect(assignment_group.rules_hash["drop_lowest"]).to eq 1
+    expect(assignment_group.rules_hash["drop_highest"]).to eq 2
+    expect(assignment_group.rules_hash["never_drop"]).to eq [assignment.id]
   end
 
   it "should edit assignment groups grade weights" do
-    @course.assignment_groups.create!(:name => "first group")
-    @course.assignment_groups.create!(:name => "second group")
+    @course.update_attribute(:group_weighting_scheme, 'percent')
+    ag1 = @course.assignment_groups.create!(:name => "first group")
+    ag2 = @course.assignment_groups.create!(:name => "second group")
+
     get "/courses/#{@course.id}/assignments"
 
-    f('#class_weighting_policy').click
+    f("#ag_#{ag1.id}_manage_link").click
+    fj(".edit_group:visible:first").click
     #wanted to change number but can only use clear because of the auto insert of 0 after clearing
     # the input
-    f('input.weight').clear
+    fj('input[name="group_weight"]:visible').send_keys('50')
     #need to wait for the total to update
+    fj('.create_group:visible').click
     wait_for_ajaximations
-    keep_trying_until { fj('#group_weight_total').text.should == '50%' }
+
+    keep_trying_until { expect(f("#assignment_group_#{ag1.id} .ag-header-controls").text).to include('50% of Total') }
+  end
+
+  #This feels like it would be better suited here than in QUnit
+  it "should not remove new assignments when editing a group" do
+    get "/courses/#{@course.id}/assignments"
+    wait_for_ajaximations
+    ag = @course.assignment_groups.first
+
+    f("#assignment_group_#{ag.id} .add_assignment").click
+    wait_for_animations
+
+    replace_content(f("#ag_#{ag.id}_assignment_name"), "Disappear")
+    fj('.create_assignment:visible').click
+    wait_for_ajaximations
+
+    expect(fj("#assignment_group_#{ag.id} .assignment:eq(1) .ig-title").text).to match "Disappear"
+
+    f("#assignment_group_#{ag.id} .al-trigger").click
+    f("#assignment_group_#{ag.id} .edit_group").click
+    wait_for_ajaximations
+
+    replace_content(f("#ag_#{ag.id}_name"), "Modified Group")
+    fj('.create_group:visible').click
+    wait_for_ajaximations
+
+    expect(fj("#assignment_group_#{ag.id} .assignment:eq(1) .ig-title").text).to match "Disappear"
+  end
+
+  #Because of the way this feature was made, i recommend we keep this one
+  it "should move assignments to another assignment group" do
+    before_count = @assignment_group.assignments.count
+    @ag2 = @course.assignment_groups.create!(:name => "2nd Group")
+    @assignment = @course.assignments.create(:name => "Test assignment", :assignment_group => @ag2)
+    get "/courses/#{@course.id}/assignments"
+    wait_for_ajaximations
+
+    f("#assignment_group_#{@ag2.id} .al-trigger").click
+    f("#assignment_group_#{@ag2.id} .delete_group").click
+    wait_for_ajaximations
+
+    fj('.assignment_group_move:visible').click
+    click_option('.group_select:visible', @assignment_group.id.to_s, :value)
+
+    fj('.delete_group:visible').click
+    wait_for_ajaximations
+
+    # two id selectors to make sure it moved
+    expect(fj("#assignment_group_#{@assignment_group.id} #assignment_#{@assignment.id}")).to_not be_nil
+
+    @assignment.reload
+    expect(@assignment.assignment_group).to eq @assignment_group
   end
 
   it "should reorder assignment groups with drag and drop" do
-    ags = []
+    ags = [@assignment_group]
     4.times do |i|
       ags << @course.assignment_groups.create!(:name => "group_#{i}")
     end
-    ags.collect(&:position).should == [1,2,3,4]
+    expect(ags.collect(&:position)).to eq [1,2,3,4,5]
 
     get "/courses/#{@course.id}/assignments"
-
-    driver.execute_script %{$('.group_move_icon').addClass('focus');}
-    second_group = fj("#group_#{ags[1].id} .group_move_icon")
-    third_group = fj("#group_#{ags[2].id} .group_move_icon")
-    driver.action.drag_and_drop(third_group, second_group).perform
+    wait_for_ajaximations
+    drag_with_js("#assignment_group_#{ags[1].id} .sortable-handle", 0, 100)
     wait_for_ajaximations
 
     ags.each {|ag| ag.reload}
-    ags.collect(&:position).should == [1,3,2,4]
+    expect(ags.collect(&:position)).to eq [1,3,2,4,5]
   end
 
-  it "should round assignment groups percentages to 2 decimal places" do
-    pending("bug 7387 - Assignment group weight should be rounded to 2 decimal places. Not 10") do
-      3.times do |i|
-        @course.assignment_groups.create!(:name => "group_#{i}")
-      end
-      get "/courses/#{@course.id}/assignments"
+  it "should allow quick-adding an assignment to a group", :priority => "1" do
+    @course.require_assignment_group
+    ag = @course.assignment_groups.first
+    time = Timecop.freeze(2015,2,7,4,15).utc
+    current_time = time.strftime('%b %-d at %-l:%M') << time.strftime('%p').downcase
+    assignment_name, assignment_points = ["Do this", "13"]
 
-      f('#class_weighting_policy').click
+    # Navigates to assignments index page.
+    get "/courses/#{@course.id}/assignments"
+    wait_for_ajaximations
+
+    # Finds and clicks the Add Assignment button on an assignment group.
+    f("#assignment_group_#{ag.id} .add_assignment").click
+    wait_for_ajaximations
+
+    # Enters in values for Name, Due, and Points, then clicks save.
+    replace_content(f("#ag_#{ag.id}_assignment_name"), assignment_name)
+    replace_content(f("#ag_#{ag.id}_assignment_due_at"), current_time)
+    replace_content(f("#ag_#{ag.id}_assignment_points"), assignment_points)
+    fj('.create_assignment:visible').click
+    wait_for_ajaximations
+
+    # Checks for correct values in back end.
+    a = ag.reload.assignments.last
+    expect(a.name).to eq "Do this"
+    expect(a.due_at).to eq time
+    expect(a.points_possible).to eq 13 
+
+    # Checks Assignments Index page UI for correct values.
+    expect(ff("#assignment_group_#{ag.id} .ig-title").last.text).to match "#{assignment_name}"
+    expect(ff("#assignment_group_#{ag.id} .assignment-date-due").last.text).to match current_time
+    expect(f("#assignment_#{a.id} .non-screenreader").text).to match "#{assignment_points} pts"
+
+    # Navigates to Assignment Show page.
+    get "/courses/#{@course.id}/assignments/#{a.id}"
+    wait_for_ajaximations
+
+    # Checks Assignment Show page for correct values.
+    expect(f(".title").text).to match "#{assignment_name}"
+    expect(f(".points_possible").text).to match "#{assignment_points}"
+    expect(f(".assignment_dates").text).to match "#{current_time}"
+    Timecop.return
+
+  end
+
+  it "should allow quick-adding two assignments to a group (dealing with form re-render)", :priority => "2" do
+    @course.require_assignment_group
+    ag = @course.assignment_groups.first
+
+    get "/courses/#{@course.id}/assignments"
+    wait_for_ajaximations
+
+    f("#assignment_group_#{ag.id} .add_assignment").click
+    wait_for_ajaximations
+
+    replace_content(f("#ag_#{ag.id}_assignment_name"), "Do this")
+    replace_content(f("#ag_#{ag.id}_assignment_points"), "13")
+    fj('.create_assignment:visible').click
+    wait_for_ajaximations
+
+    keep_trying_until do
+      fj("#assignment_group_#{ag.id} .add_assignment").click
       wait_for_ajaximations
-      group_weights = ff('.assignment_group .more_info_brief')
-      group_weights.each_with_index do |gw, i|
-        gw.text.should == "33.33%"
-      end
-      f('#group_weight_total').text.should == "99.99%"
+      fj("#ag_#{ag.id}_assignment_name").displayed?
     end
   end
 
-  it "should not allow all assignment groups to be deleted" do
-    pending("bug 7480 - User should not be permitted to delete all assignment groups") do
-      get "/courses/#{@course.id}/assignments"
-      assignment_groups = get_assignment_groups
-      assignment_groups.count.should == 1
-      assignment_groups[0].find_element(:css, '.delete_group_link').should_not be_displayed
-      refresh_page #refresh page to make sure the trashcan doesn't come back
-      get_assignment_groups[0].find_element(:css, '.delete_group_link').should_not be_displayed
-    end
-  end
-
-  it "should add multiple assignment groups and not allow the last one to be deleted" do
-    pending("bug 7480 - User should not be permitted to delete all assignment groups") do
-      4.times do |i|
-        @course.assignment_groups.create!(:name => "group_#{i}")
-      end
-      get "/courses/#{@course.id}/assignments"
-
-      assignment_groups = get_assignment_groups
-      assignment_groups_count = (assignment_groups.count - 1)
-
-      assignment_groups_count.downto(1) do |i|
-        assignment_groups[i].find_element(:css, '.delete_group_link').click
-        driver.switch_to.alert.accept
-        wait_for_ajaximations
-        driver.switch_to.default_content
-      end
-      assignment_groups[0].find_element(:css, '.delete_group_link').should_not be_displayed
-      refresh_page ##refresh page to make sure the trashcan doesn't come back
-      get_assignment_groups[0].find_element(:css, '.delete_group_link').should_not be_displayed
-    end
-  end
-
-  context "draft state with no assignments or assignment groups" do
+  context "frozen assignment group" do
     before do
-      Account.default.settings[:enable_draft] = true
-      Account.default.save!
-      @domain_root_account = Account.default
-      course_with_teacher_logged_in(:active_all => true)
+      stub_freezer_plugin
+      default_group = @course.assignment_groups.create!(:name => "default")
+      @frozen_assign = frozen_assignment(default_group)
     end
 
-    it "should display no assignment groups" do
+    it "should not allow assignment group to be deleted by teacher if assignment group id frozen", :priority => "2" do
       get "/courses/#{@course.id}/assignments"
-      wait_for_ajaximations
-      fj(".ig-empty-msg").should include_text("No Assignment Groups found")
+      expect(fj("#group_#{@frozen_assign.assignment_group_id} .delete_group_link")).to be_nil
+      expect(fj("#assignment_#{@frozen_assign.id} .delete_assignment_link")).to be_nil
+    end
+
+    it "should not be locked for admin", :priority => "2" do
+      @course.assignment_groups.create!(:name => "other")
+      course_with_admin_logged_in(:course => @course, :name => "admin user")
+      orig_title = @frozen_assign.title
+
+      run_assignment_edit(@frozen_assign) do
+        # title isn't locked, should allow editing
+        f('#assignment_name').send_keys(' edit')
+
+        expect(f('#assignment_group_id').attribute('disabled')).to be_nil
+        expect(f('#assignment_peer_reviews').attribute('disabled')).to be_nil
+        expect(f('#assignment_description').attribute('disabled')).to be_nil
+        click_option('#assignment_group_id', "other")
+      end
+
+      expect(f('h1.title')).to include_text(orig_title + ' edit')
+      expect(@frozen_assign.reload.assignment_group.name).to eq "other"
     end
   end
 
-  context "draft state" do
-    before do
-      Account.default.settings[:enable_draft] = true
-      Account.default.save!
-      @domain_root_account = Account.default
-
-      course_with_teacher_logged_in(:active_all => true)
-      @assignment_group = @course.assignment_groups.create!(:name => "Test Group")
-
-      get "/courses/#{@course.id}/assignments"
-      wait_for_ajaximations
-    end
-
-    context "assignment settings modal" do
-      def set_to(apply)
-        @course.apply_assignment_group_weights=apply
-        @course.save
-        @course.reload
-      end
-
-      def reset_flag_to_true
-        #reset the course's flag and the page
-        set_to(true)
-        get "/courses/#{@course.id}/assignments"
-        wait_for_ajaximations
-
-        #now start the test
-        f('#assignmentSettingsCog').click
-        wait_for_ajaximations
-      end
-
-      before do
-        set_to(false)
-        f('#assignmentSettingsCog').click
-        wait_for_ajaximations
-      end
-
-      it "should check the box on open" do
-        reset_flag_to_true
-        is_checked('#apply_assignment_group_weights')
-      end
-
-      it "should change a course's apply_assignment_group_weights flag" do
-        flag_before = @course.apply_group_weights?
-
-        f('#apply_assignment_group_weights').click
-        f('#update-assignment-settings').click
-        wait_for_ajaximations
-
-        @course.reload
-        flag_after = @course.apply_group_weights?
-        flag_after.should_not == flag_before
-      end
-
-      it "should hide the weights table" do
-        reset_flag_to_true
-        f('#apply_assignment_group_weights').click
-        f('#assignment_groups_weights').should_not be_displayed
-      end
-
-      it "should show the weights table" do
-        f('#apply_assignment_group_weights').click
-        f('#assignment_groups_weights').should be_displayed
-      end
-
-      it "should save an assignment group's weight" do
-        f('#apply_assignment_group_weights').click
-        val_before = @assignment_group.group_weight
-        replace_content(f('.group_weight_value'), '10')
-        f('#update-assignment-settings').click
-        wait_for_ajaximations
-        @assignment_group.reload
-        val_after = @assignment_group.group_weight
-        val_after.should_not == val_before
-      end
-    end
-
-    it "should create a new assignment group" do
-      count = @course.assignment_groups.count
-      f('#content #addGroup').click
-      wait_for_ajaximations
-
-      replace_content(f('#ag_new_name'), "Assignment Group 1")
-      fj('.create_group:visible').click
-      wait_for_ajaximations
-
-      @course.assignment_groups.count.should > count
-      new_ag = @course.assignment_groups.order(:id).last
-      f("#assignment_group_#{new_ag.id} .ig-header").text.should match "Assignment Group 1"
-    end
-
-    it "should edit an existing assignment group" do
-      ag = @course.assignment_groups.first
-      f("#assignment_group_#{ag.id} .al-trigger").click
-      f("#assignment_group_#{ag.id} .edit_group").click
-      wait_for_ajaximations
-
-      replace_content(f("#ag_#{ag.id}_name"), "Modified Group")
-      fj('.create_group:visible').click
-      wait_for_ajaximations
-
-      ag.reload.name.should == "Modified Group"
-      f("#assignment_group_#{ag.id} .ig-header").text.should match "Modified Group"
-    end
-
-    it "should not remove new assignments when editing a group" do
-      ag = @course.assignment_groups.first
-
-      f("#assignment_group_#{ag.id} .add_assignment").click
-      wait_for_ajaximations
-
-      replace_content(f("#ag_#{ag.id}_assignment_name"), "Disappear")
-      fj('.create_assignment:visible').click
-      wait_for_ajaximations
-
-      f("#assignment_group_#{ag.id} .ig-title").text.should match "Disappear"
-
-      f("#assignment_group_#{ag.id} .al-trigger").click
-      f("#assignment_group_#{ag.id} .edit_group").click
-      wait_for_ajaximations
-
-      replace_content(f("#ag_#{ag.id}_name"), "Modified Group")
-      fj('.create_group:visible').click
-      wait_for_ajaximations
-
-      f("#assignment_group_#{ag.id} .ig-title").text.should match "Disappear"
-    end
-
-    it "should save drop rules" do
-      ag = @course.assignment_groups.first
-      f("#assignment_group_#{ag.id} .al-trigger").click
-      f("#assignment_group_#{ag.id} .edit_group").click
-      wait_for_ajaximations
-
-      replace_content(f("#ag_#{ag.id}_drop_lowest"), "1")
-      replace_content(f("#ag_#{ag.id}_drop_highest"), "1")
-      fj('.create_group:visible').click
-      wait_for_ajaximations
-
-      ag.reload
-      ag.rules_hash[:drop_lowest].should == 1
-      ag.rules_hash[:drop_highest].should == 1
-      f("#assignment_group_#{ag.id} .ig-header").text.should match "2 Rules"
-    end
-
-    it "should not save drop rules when non are given" do
-      ag = @course.assignment_groups.first
-      f("#assignment_group_#{ag.id} .al-trigger").click
-      f("#assignment_group_#{ag.id} .edit_group").click
-      wait_for_ajaximations
-
-      replace_content(f("#ag_#{ag.id}_name"), "Modified Group")
-      fj('.create_group:visible').click
-      wait_for_ajaximations
-
-      ag.reload.rules_hash.should be_blank
-      f("#assignment_group_#{ag.id} .ig-header").text.should_not match "Rule"
-    end
-
-    it "should delete an assignment group with assignments" do
-      @ag2 = @course.assignment_groups.create!(:name => "2nd Group")
-      @course.assignments.create(:name => "Test assignment", :assignment_group => @ag2)
-      refresh_page
-      wait_for_ajaximations
-
-      f("#assignment_group_#{@ag2.id} .al-trigger").click
-      f("#assignment_group_#{@ag2.id} .delete_group").click
-      wait_for_ajaximations
-
-      fj('.delete_group:visible').click
-      wait_for_ajaximations
-
-      @ag2.reload
-      @ag2.workflow_state.should == 'deleted'
-    end
-
-    it "should delete an assignment group without assignments" do
-      @ag2 = @course.assignment_groups.create!(:name => "2nd Group")
-      refresh_page
-      wait_for_ajaximations
-
-      f("#assignment_group_#{@ag2.id} .al-trigger").click
-      f("#assignment_group_#{@ag2.id} .delete_group").click
-
-      driver.switch_to.alert.should_not be nil
-      driver.switch_to.alert.accept
-      wait_for_ajaximations
-
-      @ag2.reload
-      @ag2.workflow_state.should == 'deleted'
-    end
-
-    it "should not delete the last assignment group" do
-
-      f("#assignment_group_#{@assignment_group.id} .al-trigger").click
-      f("#assignment_group_#{@assignment_group.id} .delete_group").click
-
-      driver.switch_to.alert.should_not be nil
-      driver.switch_to.alert.accept
-
-      @assignment_group.reload
-      @assignment_group.should_not be nil
-    end
-
-    it "should move assignments to another assignment group" do
-      before_count = @assignment_group.assignments.count
-      @ag2 = @course.assignment_groups.create!(:name => "2nd Group")
-      @assignment = @course.assignments.create(:name => "Test assignment", :assignment_group => @ag2)
-      refresh_page
-      wait_for_ajaximations
-
-      f("#assignment_group_#{@ag2.id} .al-trigger").click
-      f("#assignment_group_#{@ag2.id} .delete_group").click
-      wait_for_ajaximations
-
-      fj('.assignment_group_move:visible').click
-      click_option('.group_select:visible', @assignment_group.id.to_s, :value)
-
-      fj('.delete_group:visible').click
-      wait_for_ajaximations
-
-      # two id selectors to make sure it moved
-      fj("#assignment_group_#{@assignment_group.id} #assignment_#{@assignment.id}").should_not be_nil
-
-      @assignment.reload
-      @assignment.assignment_group.should == @assignment_group
-    end
-
-    it "should persist collapsed assignment groups" do
-      selector = "#assignment_group_#{@assignment_group.id} .element_toggler"
-      f(selector).click
-      wait_for_ajaximations
-      refresh_page
-      wait_for_ajaximations
-      f(selector).should have_attribute('aria-expanded', 'false')
-    end
-
-    it "should update delete dialog properly" do
-      @ag2 = @course.assignment_groups.create!(:name => "2nd Group")
-      @course.assignments.create(:name => "Test assignment", :assignment_group => @ag2)
-      refresh_page
-      wait_for_ajaximations
-
-      # open the delete dialog the first time
-      f("#assignment_group_#{@ag2.id} .al-trigger").click
-      f("#assignment_group_#{@ag2.id} .delete_group").click
-      wait_for_ajaximations
-
-      # check assignment count and move to options
-      fj('.assignment_count:visible').text.should == "1"
-      ffj('.group_select:visible option').count.should == 2 # default + ag1
-      fj('.cancel_button:visible').click
-
-      # now create a new assignment
-      f("#assignment_group_#{@ag2.id} .add_assignment").click
-      wait_for_ajaximations
-
-      replace_content(f("#ag_#{@ag2.id}_assignment_name"), "Do this")
-      replace_content(f("#ag_#{@ag2.id}_assignment_points"), "13")
-      fj('.create_assignment:visible').click
-      wait_for_ajaximations
-
-      # and a new group
-      f('#content #addGroup').click
-      wait_for_ajaximations
-
-      replace_content(f('#ag_new_name'), "Assignment Group 1")
-      fj('.create_group:visible').click
-      wait_for_ajaximations
-
-      # and then open the delete dialog again and see if options are updated
-      keep_trying_until do
-        f("#assignment_group_#{@ag2.id} .al-trigger").click
-        f("#assignment_group_#{@ag2.id} .delete_group").click
-        wait_for_ajaximations
-        fj('.assignment_count:visible').present?
-      end
-
-      fj('.assignment_count:visible').text.should == "2"
-      ffj('.group_select:visible option').count.should == 3 # default + ag1 + ag3
-      fj('.cancel_button:visible').click
-    end
-
-    it "should reorder assignment groups with drag and drop" do
-      ags = [@assignment_group]
-      4.times do |i|
-        ags << @course.assignment_groups.create!(:name => "group_#{i}")
-      end
-      ags.collect(&:position).should == [1,2,3,4,5]
-
-      refresh_page
-      wait_for_ajaximations
-      drag_with_js("#assignment_group_#{ags[1].id} .sortable-handle", 0, 100)
-      wait_for_ajaximations
-
-      ags.each {|ag| ag.reload}
-      ags.collect(&:position).should == [1,3,2,4,5]
-    end
-
-    it "should correctly display rules tooltip" do
-      @assignment_group.rules_hash = {
-        'drop_lowest' => '1',
-        'drop_highest' => '1'
-      }
-      @assignment_group.save!
-
-      refresh_page
-      wait_for_ajaximations
-
-      anchor = fj("#assignment_group_#{@assignment_group.id} .ag-header-controls .tooltip_link")
-      anchor.text.should == "2 Rules"
-      anchor.should have_attribute('title', "Drop the lowest score and Drop the highest score")
-    end
-
-    context "modules" do
-      before do
-        @module = @course.context_modules.create!(:name => "module 1")
-        @assignment = @course.assignments.create!(:name => 'assignment 1', :assignment_group => @assignment_group)
-        @module.add_item :type => 'assignment', :id => @assignment.id
-      end
-
-      it "should show a single module's name" do
-        refresh_page
-        wait_for_ajaximations
-        f("#assignment_group_#{@assignment_group.id} .ig-row .ig-details .modules").text.should == "#{@module.name} Module"
-      end
-
-      it "should correctly display multiple modules" do
-        @a2 = @course.assignments.create!(:name => 'assignment 2', :assignment_group => @assignment_group)
-        @m2 = @course.context_modules.create!(:name => "module 2")
-        @module.add_item :type => 'assignment', :id => @a2.id
-        @m2.add_item :type => 'assignment', :id => @a2.id
-        refresh_page
-        wait_for_ajaximations
-        anchor = fj("[data-item-id=#{@a2.id}] .modules .tooltip_link")
-        anchor.text.should == "Multiple Modules"
-        anchor.should have_attribute('title', "#{@module.name},#{@m2.name}")
-      end
-    end
-  end
 end

@@ -30,14 +30,14 @@
 #       "kind": "captions",
 #       "created_at": "2012-09-27T16:46:50-06:00",
 #       "updated_at": "2012-09-27T16:46:50-06:00",
-#       "url": "http://<canvas>/media_objects/0_r949z9lk/media_tracks/1",
+#       "url": "https://<canvas>/media_objects/0_r949z9lk/media_tracks/1",
 #       "id": 1,
 #       "locale": "af"
 #     }, {
 #       "kind": "subtitles",
 #       "created_at": "2012-09-27T20:29:17-06:00",
 #       "updated_at": "2012-09-27T20:29:17-06:00",
-#       "url": "http://<canvas>/media_objects/0_r949z9lk/media_tracks/14",
+#       "url": "https://<canvas>/media_objects/0_r949z9lk/media_tracks/14",
 #       "id": 14,
 #       "locale": "cs"
 #     }],
@@ -87,6 +87,7 @@ class MediaObjectsController < ApplicationController
         :singleton => "retrieve_media_details:#{media_object.media_id}"
       })
     end
+
     media_object.viewed!
     render :json => media_object_api_json(media_object, @current_user, session)
   end

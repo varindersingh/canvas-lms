@@ -16,6 +16,7 @@ class Profile < ActiveRecord::Base
   validates_inclusion_of :visibility, :in => %w{ public unlisted private }
 
   self.abstract_class = true
+  self.table_name = 'profiles'
 
   def title=(title)
     write_attribute(:title, title)
@@ -27,7 +28,7 @@ class Profile < ActiveRecord::Base
     return nil unless title
     path = base_path = title.downcase.gsub(/[^a-z0-9]+/, '-').gsub(/\A\-+|\-+\z/, '')
     count = 0
-    while profile = Profile.find_by_root_account_id_and_path(root_account_id, path)
+    while profile = Profile.where(root_account_id: root_account_id, path: path).first
       break if profile.id == id
       path = "#{base_path}-#{count += 1}"
     end

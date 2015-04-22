@@ -1,47 +1,84 @@
 require File.expand_path(File.dirname(__FILE__) + "/common")
+require File.expand_path(File.dirname(__FILE__) + '/helpers/conferences_common')
 
 describe "web conference" do
-  it_should_behave_like "in-process server selenium tests"
+  include_examples "in-process server selenium tests"
+  let(:url) { "/courses/#{@course.id}/conferences" }
 
   before (:each) do
     course_with_teacher_logged_in
-    PluginSetting.create!(:name => "dim_dim", :settings =>
-        {"domain" => "dimdim.instructure.com"})
+    PluginSetting.create!(:name => "wimba", :settings =>
+       {"domain" => "wimba.instructure.com"})
   end
 
   context "with no conferences" do
     before (:each) do
-      get "/courses/#{@course.id}/conferences"
-      wait_for_ajaximations
+      get url
     end
 
-    it "should create a web conference" do
-      conference_title = 'Testing Conference'
+    it "should display initial elements of the conference page", :priority => "1", :test_id => 118488 do
       keep_trying_until do
-        fj('.new-conference-btn').displayed?.should be_true
+        expect(fj('.new-conference-btn')).to be_displayed
       end
+      headers = ff('.element_toggler')
+      expect(headers[0]).to include_text("New Conferences")
+      expect(f'#new-conference-list').to include_text("There are no new conferences")
+      expect(headers[1]).to include_text("Concluded Conferences")
+      expect(f'#concluded-conference-list').to include_text("There are no concluded conferences")
+    end
+
+    it "should create a web conference", :priority => "1", :test_id => 118489 do
+      conference_title = 'Testing Conference'
       fj('.new-conference-btn').click
       wait_for_ajaximations
       keep_trying_until do
         replace_content(f('#web_conference_title'), conference_title)
-        f('#add_conference_form .btn-primary').click
+        f('.ui-dialog .btn-primary').click
         wait_for_ajaximations
-        fj("#new-conference-list .ig-title").displayed?.should be_true
+        expect(fj("#new-conference-list .ig-title")).to be_displayed
       end
-      fj("#new-conference-list .ig-title").text.should contain(conference_title)
+      expect(fj("#new-conference-list .ig-title").text).to include(conference_title)
     end
 
-    it "should cancel creating a web conference" do
+    it "should cancel creating a web conference", :priority => "2" do
       conference_title = 'new conference'
       f('.new-conference-btn').click
       wait_for_ajaximations
       keep_trying_until do
         replace_content(f('#web_conference_title'), conference_title)
-        f('#add_conference_form button.cancel_button').click
+        f('.ui-dialog button.cancel_button').click
         wait_for_ajaximations
       end
-      f('#add_conference_form').displayed?.should be_false
+      expect(f('#add_conference_form')).not_to be_displayed
     end
   end
 
+  context "with conferences" do
+    before (:each) do
+      #Creates conferences before getting the page so they appear when it loads up
+      @cc = WimbaConference.create!(:title => "test conference", :user => @user, :context => @course)
+    end
+
+    it "should delete active conferences", :priority => "1", :test_id => 126912 do
+      get url
+
+      f('.icon-settings').click
+      wait_for_ajaximations
+      delete_conference
+      expect(f'#new-conference-list').to include_text("There are no new conferences")
+    end
+
+    it "should delete concluded conferences", :priority => "2", :test_id => 163991 do
+      #closing will conclude the conference
+      @cc.close
+      @cc.save!
+
+      get url
+
+      f('.icon-settings').click
+      wait_for_ajaximations
+      delete_conference
+      expect(f'#concluded-conference-list').to include_text("There are no concluded conferences")
+    end
+  end
 end

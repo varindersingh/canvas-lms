@@ -122,7 +122,8 @@ define([
           contextGroups.insertIntoGroup($user, $group);
         }
 
-        $group.find(".loading_members").html(data['pagination_html']);
+        // xsslint safeString.property pagination_html
+        $group.find(".loading_members").html(data.pagination_html);
         $group.find(".unassigned_members_pagination a").click(function(event) {
           event.preventDefault();
           var page_regex = /page=(\d+)/
@@ -143,16 +144,17 @@ define([
       var user_id = $student.getTemplateData({textValues: ['user_id']}).user_id;
       var $original_group = $student.parents(".group");
       var url = ENV.add_user_url;
-      method = "POST";
-      if(!id || id.length == 0) {
-        url = ENV.remove_user_url;
+      var data = {};
+      var method;
+      if (id) {
+        method = "POST";
+        data.user_id = user_id;
+      } else {
         method = "DELETE";
+        url = $.replaceTags(ENV.remove_user_url, "user_id", user_id);
         id = $original_group.getTemplateData({textValues: ['group_id']}).group_id;
       }
       url = $.replaceTags(url, "id", id);
-      var data = {
-        user_id: user_id
-      }
       $student.remove();
 
       var $student_instances = $student;

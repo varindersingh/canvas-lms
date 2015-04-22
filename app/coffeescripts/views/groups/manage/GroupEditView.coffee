@@ -8,11 +8,15 @@ define [
 
   class GroupEditView extends DialogFormView
 
+    @optionProperty 'groupCategory'
+    @optionProperty 'student'
+
     defaults:
       width: 550
       title: I18n.t "edit_group", "Edit Group"
-      # Default to edit mode. Set to "false" for adding mode.
-      editing: true
+
+    els:
+      '[name=max_membership]': '$maxMembership'
 
     template: template
 
@@ -20,21 +24,36 @@ define [
 
     className: 'dialogFormView group-edit-dialog form-horizontal form-dialog'
 
-    events:
-      _.extend {},
-      DialogFormView::events,
+    attach: ->
+      if @model
+        @model.on('change', @refreshIfNameOnlyMode, this)
+
+    refreshIfNameOnlyMode: ->
+      if @options.nameOnly
+        window.location.reload()
+
+
+    events: _.extend {},
+      DialogFormView::events
       'click .dialog_closer': 'close'
 
     translations:
       too_long: I18n.t "name_too_long", "Name is too long"
 
-    initialize: (options) ->
-      super
-      @options.title = I18n.t "add_group", "Add Group" if !@options.editing
+    validateFormData: (data, errors) ->
+      if @$maxMembership.length > 0 and !@$maxMembership[0].validity.valid
+        {"max_membership": [{message: I18n.t('max_membership_number', 'Max membership must be a number') }]}
 
     openAgain: ->
       super
       # reset the form contents
       @render()
       # auto-focus the first input
-      @$el.find('input:first').focus()
+      @$('input:first').focus()
+
+    toJSON: ->
+      json = _.extend super,
+        role: @groupCategory.get('role')
+        nameOnly: @options.nameOnly
+      json
+

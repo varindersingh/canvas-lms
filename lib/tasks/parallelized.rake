@@ -2,33 +2,26 @@
 unless ARGV.any? { |a| a =~ /\Agems/ }
 
   namespace :parallel do
-    task :nonseleniumparallel, :count do |t, args|
-      require "parallelized_specs"
-      require File.expand_path(File.dirname(__FILE__) + '/parallel_exclude')
-      count = args[:count]
-      single_thread_files = ParallelExclude::FILES
-      test_files = FileList['vendor/plugins/*/spec_canvas/**/*_spec.rb'].exclude('vendor/plugins/*/spec_canvas/selenium/*_spec.rb') + FileList['spec/**/*_spec.rb'].exclude('spec/selenium/**/*_spec.rb')
-      single_thread_files.each { |filename| test_files.delete(filename) } #need to exclude these tests from running in parallel because they have dependencies that break the spces when run in parallel
-      test_files.map! { |f| "#{Rails.root}/#{f}" }
-      Rake::Task['parallel:spec'].invoke(count, '', '', test_files.join(' '))
-    end
 
     task :nonselenium, :count do |t, args|
+      Rake::Task['spec:plugin_non_parallel'].execute
+      Rake::Task['parallel:plugin_parallel'].invoke(args[:count])
+    end
 
-      Rake::Task['spec:single'].execute #first rake task to run the files that fail in parallel in a single thread
-
-      if File.zero?('tmp/parallel_log/rspec.failures')
-        Rake::Task['parallel:nonseleniumparallel'].invoke(args[:count])
-      else
-        abort(`cat tmp/parallel_log/rspec.failures`)
-      end
-
+    task :plugin_parallel, :count do |t, args|
+      require "parallelized_specs"
+      count = args[:count]
+      test_files = FileList['{gems,vendor}/plugins/*/spec_canvas/**/*_spec.rb'].exclude(%r'spec_canvas/selenium') + FileList['spec/**/*_spec.rb'].exclude(%r'spec/selenium')
+      test_files.map! { |f| "#{Rails.root}/#{f}" }
+      Rake::Task['parallel:spec'].invoke(count, '', '', test_files.join(' '))
     end
 
     task :selenium, :count, :build_section do |t, args|
       require "parallelized_specs"
       #used to split selenium builds when :build_section is set split it in two.
-      test_files = FileList['spec/selenium/**/*_spec.rb'] + FileList['vendor/plugins/*/spec_canvas/selenium/*_spec.rb']
+
+      test_files = FileList['spec/selenium/**/*_spec.rb'] + FileList['{gems,vendor}/plugins/*/spec_canvas/selenium/*_spec.rb']
+
       test_files = test_files.to_a.sort_by! { |file| File.size(file) }
       args[:build_section].to_i == 0 ? section = nil : section = args[:build_section].to_i
 
@@ -61,10 +54,15 @@ unless ARGV.any? { |a| a =~ /\Agems/ }
         end
       end
       test_files.map! { |f| "#{Rails.root}/#{f}" }
+      test_files.each { |f| puts f }
+
+      Rake::Task['spec:selenium_non_parallel'].execute(test_files)
+
+      puts 'starting paralellized selenium spec runtime'
       Rake::Task['parallel:spec'].invoke(args[:count], '', '', test_files.join(' '))
     end
 
-    task :pattern, :count, :file_pattern do |t, args|
+    task(:pattern, :count, :file_pattern) do |t, args|
       require "parallelized_specs"
       count = args[:count]
       file_pattern = args[:file_pattern]

@@ -11,9 +11,10 @@ define [
 
     events:
       'click a.context-more': 'toggle'
-      'click a.delete-btn': 'remove'
+      'click .delete-btn': 'triggerRemoval'
 
     initialize: ->
+      super
       @model.set(isCondensable: @model.get('body').length > 180)
       @model.set(isCondensed: true)
 
@@ -28,3 +29,6 @@ define [
       @model.set(isCondensed: !@model.get('isCondensed'))
       @render()
       @$('a').focus()
+
+    triggerRemoval: ->
+      @model.trigger("removeView", { view: @ })

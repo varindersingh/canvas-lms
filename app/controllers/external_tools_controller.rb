@@ -21,18 +21,29 @@
 # "External tools" are IMS LTI links: http://www.imsglobal.org/developers/LTI/index.cfm
 class ExternalToolsController < ApplicationController
   before_filter :require_context
-  before_filter :require_user, :except => [:sessionless_launch]
+  before_filter :require_access_to_context, except: [:index, :sessionless_launch]
+  before_filter :require_user, only: [:generate_sessionless_launch]
   before_filter :get_context, :only => [:retrieve, :show, :resource_selection]
   include Api::V1::ExternalTools
 
   REDIS_PREFIX = 'external_tool:sessionless_launch:'
 
+  TOOL_DISPLAY_TEMPLATES = {
+    'borderless' => {template: 'lti/unframed_launch', layout: 'borderless_lti'},
+    'full_width' => {template: 'lti/full_width_launch'},
+    'in_context' => {template: 'lti/framed_launch'},
+    'default' =>    {template: 'lti/framed_launch'},
+  }
+
   # @API List external tools
   # Returns the paginated list of external tools for the current context.
   # See the get request docs for a single tool for a list of properties on an external tool.
   #
-  # @argument search_term [Optional, String]
+  # @argument search_term [String]
   #   The partial name of the tools to match and return.
+  #
+  # @argument selectable [Boolean]
+  #   If true, then only tools that are meant to be selectable are returned
   #
   # @example_response
   #     [
@@ -73,50 +84,52 @@ class ExternalToolsController < ApplicationController
         @tools = @context.context_external_tools.active
       end
       @tools = ContextExternalTool.search_by_attribute(@tools, :name, params[:search_term])
+
+      if Canvas::Plugin.value_to_boolean(params[:selectable])
+        @tools = @tools.select{|t| t.selectable }
+      end
       respond_to do |format|
-          @tools = Api.paginate(@tools, self, tool_pagination_url)
-          format.json {render :json => external_tools_json(@tools, @context, @current_user, session)}
+        @tools = Api.paginate(@tools, self, tool_pagination_url)
+        format.json { render :json => external_tools_json(@tools, @context, @current_user, session) }
       end
     end
   end
-  
+
   def homework_submissions
-    if authorized_action(@context, @current_user, :read)
-      @tools = ContextExternalTool.all_tools_for(@context, :user => @current_user).select(&:has_homework_submission)
-      respond_to do |format|
-        format.json {render :json => external_tools_json(@tools, @context, @current_user, session)}
-      end
+    @tools = ContextExternalTool.all_tools_for(@context, :user => @current_user, :type => :has_homework_submission)
+    respond_to do |format|
+      format.json { render :json => external_tools_json(@tools, @context, @current_user, session) }
     end
   end
-  
+
   def finished
     @headers = false
-    if authorized_action(@context, @current_user, :read)
-    end
   end
-  
-  def retrieve
-    if authorized_action(@context, @current_user, :read)
-      @tool = ContextExternalTool.find_external_tool(params[:url], @context)
-      if !@tool
-        flash[:error] = t "#application.errors.invalid_external_tool", "Couldn't find valid settings for this link"
-        redirect_to named_context_url(@context, :context_url)
-        return
-      end
-      @resource_title = @tool.name
-      @resource_url = params[:url]
-      @opaque_id = @context.opaque_identifier(:asset_string)
-      add_crumb(@context.name, named_context_url(@context, :context_url))
-      @return_url = url_for(@context)
-      @launch = BasicLTI::ToolLaunch.new(:url => @resource_url, :tool => @tool, :user => @current_user, :context => @context, :link_code => @opaque_id, :return_url => @return_url, :resource_type => @resource_type)
-      @tool_settings = @launch.generate
 
-      if params[:borderless]
-        render :partial => 'external_tools/borderless_launch'
-      else
-        render :template => 'external_tools/tool_show'
-      end
+  def retrieve
+    @tool = ContextExternalTool.find_external_tool(params[:url], @context)
+    if !@tool
+      flash[:error] = t "#application.errors.invalid_external_tool", "Couldn't find valid settings for this link"
+      redirect_to named_context_url(@context, :context_url)
+      return
     end
+    add_crumb(@context.name, named_context_url(@context, :context_url))
+
+    @lti_launch = Lti::Launch.new
+
+    opts = {
+        resource_type: @resource_type,
+        launch_url: params[:url]
+    }
+    adapter = Lti::LtiOutboundAdapter.new(@tool, @current_user, @context).prepare_tool_launch(url_for(@context), variable_expander, opts)
+    @lti_launch.params = adapter.generate_post_payload
+
+    @lti_launch.resource_url = params[:url]
+    @lti_launch.link_text =  @tool.name
+    @lti_launch.analytics_id =  @tool.tool_id
+
+    display = (params['borderless'] ? 'borderless' : params['display'])
+    render TOOL_DISPLAY_TEMPLATES[display] || TOOL_DISPLAY_TEMPLATES['default']
   end
 
   # @API Get a sessionless launch url for an external tool.
@@ -124,101 +137,110 @@ class ExternalToolsController < ApplicationController
   #
   # Either the id or url must be provided.
   #
-  # @argument id [Optional, String]
+  # @argument id [String]
   #   The external id of the tool to launch.
   #
-  # @argument url [Optional, String]
+  # @argument url [String]
   #   The LTI launch url for the external tool.
   #
-  # @argument assignment_id [Optional, String]
+  # @argument assignment_id [String]
   #   The assignment id for an assignment launch.
   #
-  # @argument launch_type [Optional, String]
+  # @argument launch_type [String]
   #   The type of launch to perform on the external tool.
   #
   # @response_field id The id for the external tool to be launched.
   # @response_field name The name of the external tool to be launched.
   # @response_field url The url to load to launch the external tool for the user.
   def generate_sessionless_launch
-    if authorized_action(@context, @current_user, :read)
-      # prerequisite checks
-      unless Canvas.redis_enabled?
-        @context.errors.add(:redis, 'Redis is not enabled, but is required for sessionless LTI launch')
-        render :json => @context.errors, :status => :service_unavailable
-        return
-      end
+    # prerequisite checks
+    unless Canvas.redis_enabled?
+      @context.errors.add(:redis, 'Redis is not enabled, but is required for sessionless LTI launch')
+      render :json => @context.errors, :status => :service_unavailable
+      return
+    end
 
-      tool_id = params[:id]
-      launch_url = params[:url]
+    tool_id = params[:id]
+    launch_url = params[:url]
 
-      #extra permissions for assignments
-      assignment = nil
-      if params[:launch_type] == 'assessment'
-        unless params[:assignment_id]
-          @context.errors.add(:assignment_id, 'An assignment id must be provided for assessment LTI launch')
-          render :json => @context.errors, :status => :bad_request
-          return
-        end
-
-        assignment = @context.assignments.find_by_id(params[:assignment_id])
-        unless assignment
-          @context.errors.add(:assignment_id, 'The assignment was not found in this course')
-          render :json => @context.errors, :status => :bad_request
-          return
-        end
-
-        return unless authorized_action(assignment, @current_user, :read)
-
-        launch_url = assignment.external_tool_tag.url
-      end
-
-      unless tool_id || launch_url
-        @context.errors.add(:id, 'An id or a url must be provided')
-        @context.errors.add(:url, 'An id or a url must be provided')
+    #extra permissions for assignments
+    assignment = nil
+    if params[:launch_type] == 'assessment'
+      unless params[:assignment_id]
+        @context.errors.add(:assignment_id, 'An assignment id must be provided for assessment LTI launch')
         render :json => @context.errors, :status => :bad_request
         return
       end
 
-      # locate the tool
-      if launch_url
-        @tool = ContextExternalTool.find_external_tool(launch_url, @context, tool_id)
-      else
-        find_tool(tool_id, params[:launch_type])
-      end
-      if !@tool
-        flash[:error] = t "#application.errors.invalid_external_tool", "Couldn't find valid settings for this link"
-        redirect_to named_context_url(@context, :context_url)
+      assignment = @context.assignments.where(id: params[:assignment_id]).first
+      unless assignment
+        @context.errors.add(:assignment_id, 'The assignment was not found in this course')
+        render :json => @context.errors, :status => :bad_request
         return
       end
 
-      # generate the launch
-      @launch = @tool.create_launch(@context, @current_user, url_for(@context),
-                                    :selection_type => params[:launch_type],
-                                    :resource_url => params[:url])
-
-      if assignment
-        @launch.for_assignment!(assignment, lti_grade_passback_api_url(@tool), blti_legacy_grade_passback_api_url(@tool))
+      unless assignment.external_tool_tag
+        @context.errors.add(:assignment_id, 'The assignment must have an external tool tag')
+        render :json => @context.errors, :status => :bad_request
+        return
       end
 
-      launch_settings = {
-        'launch_url' => @launch.url,
-        'tool_name' => @tool.name,
-        'tool_settings' => @launch.generate,
-      }
+      return unless authorized_action(assignment, @current_user, :read)
 
-      # store the launch settings and return to the user
-      verifier = SecureRandom.hex(64)
-      Canvas.redis.setex("#{@context.class.name}:#{REDIS_PREFIX}#{verifier}", 5.minutes, launch_settings.to_json)
-
-      if @context.is_a?(Account)
-        uri = URI(account_external_tools_sessionless_launch_url(@context))
-      else
-        uri = URI(course_external_tools_sessionless_launch_url(@context))
-      end
-      uri.query = {:verifier => verifier}.to_query
-
-      render :json => { :id => @tool.id, :name => @tool.name, :url => uri.to_s }
+      launch_url = assignment.external_tool_tag.url
     end
+
+    unless tool_id || launch_url
+      @context.errors.add(:id, 'An id or a url must be provided')
+      @context.errors.add(:url, 'An id or a url must be provided')
+      render :json => @context.errors, :status => :bad_request
+      return
+    end
+
+    # locate the tool
+    if launch_url
+      @tool = ContextExternalTool.find_external_tool(launch_url, @context, tool_id)
+    else
+      return unless find_tool(tool_id, params[:launch_type])
+    end
+    if !@tool
+      flash[:error] = t "#application.errors.invalid_external_tool", "Couldn't find valid settings for this link"
+      redirect_to named_context_url(@context, :context_url)
+      return
+    end
+
+    # generate the launch
+    opts = {
+        launch_url: launch_url,
+        resource_type: params[:launch_type]
+    }
+
+    adapter = Lti::LtiOutboundAdapter.new(@tool, @current_user, @context).prepare_tool_launch(url_for(@context), variable_expander(assignment: assignment), opts)
+
+    launch_settings = {
+      'launch_url' => adapter.launch_url,
+      'tool_name' => @tool.name,
+      'analytics_id' => @tool.tool_id
+    }
+
+    if assignment
+      launch_settings['tool_settings'] = adapter.generate_post_payload_for_assignment(assignment, lti_grade_passback_api_url(@tool), blti_legacy_grade_passback_api_url(@tool))
+    else
+      launch_settings['tool_settings'] = adapter.generate_post_payload
+    end
+
+    # store the launch settings and return to the user
+    verifier = SecureRandom.hex(64)
+    Canvas.redis.setex("#{@context.class.name}:#{REDIS_PREFIX}#{verifier}", 5.minutes, launch_settings.to_json)
+
+    if @context.is_a?(Account)
+      uri = URI(account_external_tools_sessionless_launch_url(@context))
+    else
+      uri = URI(course_external_tools_sessionless_launch_url(@context))
+    end
+    uri.query = {:verifier => verifier}.to_query
+
+    render :json => {:id => @tool.id, :name => @tool.name, :url => uri.to_s}
   end
 
   def sessionless_launch
@@ -234,11 +256,13 @@ class ExternalToolsController < ApplicationController
 
     launch_settings = JSON.parse(launch_settings)
 
-    @resource_url = launch_settings['launch_url']
-    @resource_title = launch_settings['tool_name']
-    @tool_settings = launch_settings['tool_settings']
+    @lti_launch = Lti::Launch.new
+    @lti_launch.params = launch_settings['tool_settings']
+    @lti_launch.resource_url = launch_settings['launch_url']
+    @lti_launch.link_text =  launch_settings['tool_name']
+    @lti_launch.analytics_id =  launch_settings['analytics_id']
 
-    render :partial => 'external_tools/borderless_launch'
+    render TOOL_DISPLAY_TEMPLATES['borderless']
   end
 
   # @API Get a single external tool
@@ -280,183 +304,346 @@ class ExternalToolsController < ApplicationController
   #      }
   def show
     if api_request?
-      if tool = @context.context_external_tools.active.find_by_id(params[:external_tool_id])
+      if tool = @context.context_external_tools.active.where(id: params[:external_tool_id]).first
         render :json => external_tool_json(tool, @context, @current_user, session)
       else
         raise(ActiveRecord::RecordNotFound, "Couldn't find external tool with API id '#{params[:external_tool_id]}'")
       end
     else
-      # this is coming from a content tag redirect that set @tool
-      selection_type = "#{@context.class.base_ar_class.to_s.downcase}_navigation"
+      placement = params[:placement] || params[:launch_type] || "#{@context.class.base_class.to_s.downcase}_navigation"
+      if find_tool(params[:id], placement)
 
-      find_tool(params[:id], selection_type)
-      @active_tab = @tool.asset_string if @tool
-      @show_embedded_chat = false if @tool.try(:tool_id) == 'chat'
-      render_tool(selection_type)
+        log_asset_access(@tool, "external_tools", "external_tools")
+
+        @return_url = external_content_success_url('external_tool_redirect')
+        @redirect_return = true
+
+        success_url = tool_return_success_url(placement)
+        cancel_url = tool_return_cancel_url(placement) || success_url
+        js_env(:redirect_return_success_url => success_url,
+               :redirect_return_cancel_url => cancel_url)
+        js_env(:course_id => @context.id) if @context.is_a?(Course)
+
+        @active_tab = @tool.asset_string
+        @show_embedded_chat = false if @tool.tool_id == 'chat'
+
+        @lti_launch = lti_launch(@tool, placement)
+        render tool_launch_template(@tool, placement)
+      end
       add_crumb(@context.name, named_context_url(@context, :context_url))
     end
   end
 
+  def tool_return_success_url(selection_type=nil)
+    case @context
+    when Course
+      case selection_type
+      when "course_settings_sub_navigation"
+        course_settings_url(@context)
+      else
+        course_url(@context)
+      end
+    when Account
+      case selection_type
+      when "global_navigation"
+        dashboard_url
+      else
+        account_url(@context)
+      end
+    else
+      dashboard_url
+    end
+  end
+
+  def tool_return_cancel_url(selection_type)
+    case @context
+    when Course
+      if selection_type == "course_home_sub_navigation"
+        course_url(@context)
+      end
+    else
+      nil
+    end
+  end
+
   def resource_selection
-    return unless authorized_action(@context, @current_user, :read)
     add_crumb(@context.name, named_context_url(@context, :context_url))
 
     selection_type = params[:launch_type] || 'resource_selection'
     selection_type = 'editor_button' if params[:editor]
     selection_type = 'homework_submission' if params[:homework]
 
-    @return_url    = external_content_success_url('external_tool')
-    @headers       = false
-    @self_target   = true
+    @return_url = external_content_success_url('external_tool_dialog')
+    @headers = false
 
-    find_tool(params[:external_tool_id], selection_type)
-    render_tool(selection_type)
+    tool = find_tool(params[:external_tool_id], selection_type)
+    if tool
+      @lti_launch = lti_launch(@tool, selection_type)
+      render TOOL_DISPLAY_TEMPLATES['borderless']
+    end
   end
 
   def find_tool(id, selection_type)
-    begin
-      @tool = ContextExternalTool.find_for(id, @context, selection_type)
-    rescue ActiveRecord::RecordNotFound; end
+    if selection_type.nil? || ContextExternalTool::EXTENSION_TYPES.include?(selection_type.to_sym)
+      @tool = ContextExternalTool.find_for(id, @context, selection_type, false)
+    end
+
     if !@tool
       flash[:error] = t "#application.errors.invalid_external_tool_id", "Couldn't find valid settings for this tool"
       redirect_to named_context_url(@context, :context_url)
     end
+
+    @tool
   end
   protected :find_tool
 
-  def render_tool(selection_type)
-    return unless @tool
-    @resource_title = @tool.label_for(selection_type.to_sym)
+  def lti_launch(tool, selection_type)
     @return_url ||= url_for(@context)
-    @launch = @tool.create_launch(@context, @current_user, @return_url, :selection_type => selection_type)
-    if selection_type == 'homework_submission'
-      @assignment = @context.assignments.active.find(params[:assignment_id])
-      @launch.for_homework_submission!(@assignment)
+    message_type = tool.extension_setting(selection_type, 'message_type')
+    case message_type
+      when 'ContentItemSelectionResponse', 'ContentItemSelection'
+        #ContentItemSelectionResponse is deprecated, use ContentItemSelection instead
+        content_item_selection(tool, selection_type, create_content_item_response, message_type)
+      when 'ContentItemSelectionRequest'
+        content_item_selection_request(tool, selection_type)
+      else
+        basic_lti_launch_request(tool, selection_type)
     end
-    @resource_url = @launch.url
-    resource_uri = URI.parse @launch.url
-    @tool_id = @tool.tool_id || resource_uri.host || 'unknown'
-    @tool_path = (resource_uri.path.empty? ? "/" : resource_uri.path)
-
-    @tool_settings = @launch.generate
-    render :template => 'external_tools/tool_show'
   end
-  protected :render_tool
+  protected :lti_launch
+
+  def basic_lti_launch_request(tool, selection_type)
+    lti_launch = Lti::Launch.new
+
+    opts = {
+        resource_type: selection_type,
+        selected_html: params[:selection]
+    }
+    assignment = selection_type == 'homework_submission' && @context.assignments.active.find(params[:assignment_id])
+
+    adapter = Lti::LtiOutboundAdapter.new(tool, @current_user, @context).prepare_tool_launch(@return_url, variable_expander(assignemnt: assignment, tool: tool), opts)
+    lti_launch.params = assignment ? adapter.generate_post_payload_for_homework_submission(assignment) : adapter.generate_post_payload
+
+    lti_launch.resource_url = adapter.launch_url
+    lti_launch.link_text = tool.label_for(selection_type.to_sym)
+    lti_launch.analytics_id = tool.tool_id
+    lti_launch
+  end
+  protected :basic_lti_launch_request
+
+  def content_item_selection(tool, placement, content_item_response, message_type)
+    params = default_lti_params.merge(
+      {
+        #required params
+        lti_message_type: message_type,
+        lti_version: 'LTI-1p0',
+        resource_link_id: Lti::Asset.opaque_identifier_for(@context),
+        content_items: content_item_response.to_json(lti_message_type: message_type),
+        launch_presentation_return_url: @return_url,
+        context_title: @context.name,
+        tool_consumer_instance_name: @domain_root_account.name,
+        tool_consumer_instance_contact_email: HostUrl.outgoing_email_address,
+      }).merge(variable_expander(tool: tool, attachment: content_item_response.file).expand_variables!(tool.set_custom_fields(placement)))
+
+    lti_launch = Lti::Launch.new
+    lti_launch.resource_url = tool.extension_setting(placement, :url)
+    lti_launch.params = LtiOutbound::ToolLaunch.generate_params(params, lti_launch.resource_url, tool.consumer_key, tool.shared_secret)
+    lti_launch.link_text = tool.label_for(placement.to_sym)
+    lti_launch.analytics_id = tool.tool_id
+
+    lti_launch
+  end
+  protected :content_item_selection
+
+  def create_content_item_response
+    media_types = params.select { |param| Lti::ContentItemResponse::MEDIA_TYPES.include? param.to_sym }
+    begin
+      Lti::ContentItemResponse.new(@context, self, @current_user, media_types, params["export_type"])
+    rescue Lti::UnauthorizedError
+      render_unauthorized_action
+    rescue Lti::UnsupportedExportTypeError
+      #Legacy API behavior does nothing if the export type is unsupported
+    end
+  end
+
+  protected :create_content_item_response
+
+  # Do an official content-item request as specified: http://www.imsglobal.org/LTI/services/ltiCIv1p0pd/ltiCIv1p0pd.html
+  def content_item_selection_request(tool, placement)
+    extra_params = {}
+    return_url = external_content_success_url('external_tool_dialog')
+
+    # choose accepted return types based on placement
+    # todo, make return types configurable at installation?
+    case placement
+      when 'migration_selection'
+        accept_media_types = 'application/vnd.ims.imsccv1p1,application/vnd.ims.imsccv1p2,application/vnd.ims.imsccv1p3,application/zip,application/xml'
+        return_url = course_content_migrations_url(@context)
+        accept_presentation_document_targets = 'download'
+        extra_params[:accept_copy_advice] = true
+        extra_params[:ext_content_file_extensions] = 'zip,imscc,mbz,xml'
+      when 'editor_button'
+        accept_media_types = 'image/*,text/html,application/vnd.ims.lti.v1.launch+json,*/*'
+        accept_presentation_document_targets = 'embed,frame,iframe,window'
+      when 'resource_selection'
+        accept_media_types = 'application/vnd.ims.lti.v1.launch+json'
+        accept_presentation_document_targets = 'frame,window'
+      when 'homework_submission'
+        assignment = @context.assignments.active.find(params[:assignment_id])
+        accept_media_types = '*/*'
+        accept_presentation_document_targets = 'none'
+        extra_params[:accept_copy_advice] = true
+        accept_media_types = assignment.allowed_extensions.map{ |ext| MimetypeFu::EXTENSIONS[ext] }.compact.join(',') if assignment.allowed_extensions.present?
+      else
+        # todo: we _could_, if configured, have any other placements return to the content migration page...
+        raise "Content-Item not supported at this placement"
+    end
+
+    params = default_lti_params.merge({
+        #required params
+        lti_message_type: 'ContentItemSelectionRequest',
+        lti_version: 'LTI-1p0',
+        accept_media_types: accept_media_types,
+        accept_presentation_document_targets: accept_presentation_document_targets,
+        content_item_return_url: return_url,
+        #optional params
+        accept_multiple: false,
+        context_title: @context.name,
+    }).merge(extra_params).merge(variable_expander(tool:tool).expand_variables!(tool.set_custom_fields(placement)))
+
+    lti_launch = Lti::Launch.new
+    lti_launch.resource_url = tool.extension_setting(placement, :url)
+    lti_launch.params = LtiOutbound::ToolLaunch.generate_params(params, lti_launch.resource_url, tool.consumer_key, tool.shared_secret)
+    lti_launch.link_text = tool.label_for(placement.to_sym)
+    lti_launch.analytics_id = tool.tool_id
+
+    lti_launch
+  end
+  protected :content_item_selection_request
+
+  def tool_launch_template(tool, selection_type)
+    TOOL_DISPLAY_TEMPLATES[tool.display_type(selection_type)] || TOOL_DISPLAY_TEMPLATES['default']
+  end
+  protected :tool_launch_template
 
   # @API Create an external tool
   # Create an external tool in the specified course/account.
   # The created tool will be returned, see the "show" endpoint for an example.
   #
-  # @argument name [String]
+  # @argument name [Required, String]
   #   The name of the tool
   #
-  # @argument privacy_level [String, "anonymous"|"name_only"|"public"]
+  # @argument privacy_level [Required, String, "anonymous"|"name_only"|"public"]
   #   What information to send to the external tool.
   #
-  # @argument consumer_key [String]
+  # @argument consumer_key [Required, String]
   #   The consumer key for the external tool
   #
-  # @argument shared_secret [String]
+  # @argument shared_secret [Required, String]
   #   The shared secret with the external tool
   #
-  # @argument description [Optional, String]
+  # @argument description [String]
   #   A description of the tool
   #
-  # @argument url [Optional, String]
+  # @argument url [String]
   #   The url to match links against. Either "url" or "domain" should be set,
   #   not both.
   #
-  # @argument domain [Optional, String]
+  # @argument domain [String]
   #   The domain to match links against. Either "url" or "domain" should be
   #   set, not both.
   #
-  # @argument icon_url [Optional, String]
+  # @argument icon_url [String]
   #   The url of the icon to show for this tool
   #
-  # @argument text [Optional, String]
+  # @argument text [String]
   #   The default text to show for this tool
   #
-  # @argument custom_fields [Optional, String]
+  # @argument not_selectable [Boolean]
+  #   Default: false, if set to true the tool won't show up in the external tool
+  #   selection UI in modules and assignments
+  #
+  # @argument custom_fields [String]
   #   Custom fields that will be sent to the tool consumer, specified as
   #   custom_fields[field_name]
   #
-  # @argument account_navigation[url] [Optional, String]
+  # @argument account_navigation[url] [String]
   #   The url of the external tool for account navigation
   #
-  # @argument account_navigation[enabled] [Optional, Boolean]
+  # @argument account_navigation[enabled] [Boolean]
   #   Set this to enable this feature
   #
-  # @argument account_navigation[text] [Optional, String]
+  # @argument account_navigation[text] [String]
   #   The text that will show on the left-tab in the account navigation
   #
-  # @argument user_navigation[url] [Optional, String]
+  # @argument user_navigation[url] [String]
   #   The url of the external tool for user navigation
   #
-  # @argument user_navigation[enabled] [Optional, Boolean]
+  # @argument user_navigation[enabled] [Boolean]
   #   Set this to enable this feature
   #
-  # @argument user_navigation[text] [Optional, String]
+  # @argument user_navigation[text] [String]
   #   The text that will show on the left-tab in the user navigation
   #
-  # @argument course_navigation[url] [Optional, String]
+  # @argument course_navigation[url] [String]
   #   The url of the external tool for course navigation
   #
-  # @argument course_navigation[enabled] [Optional, Boolean]
+  # @argument course_navigation[enabled] [Boolean]
   #   Set this to enable this feature
   #
-  # @argument course_navigation[text] [Optional, String]
+  # @argument course_navigation[text] [String]
   #   The text that will show on the left-tab in the course navigation
   #
-  # @argument course_navigation[visibility] [Optional, String, "admins"|"members"]
+  # @argument course_navigation[visibility] [String, "admins"|"members"]
   #   Who will see the navigation tab. "admins" for course admins, "members" for
   #   students, null for everyone
   #
-  # @argument course_navigation[default] [Optional, Boolean]
+  # @argument course_navigation[default] [Boolean]
   #   Whether the navigation option will show in the course by default or
   #   whether the teacher will have to explicitly enable it
   #
-  # @argument editor_button[url] [Optional, String]
+  # @argument editor_button[url] [String]
   #   The url of the external tool
   #
-  # @argument editor_button[enabled] [Optional, Boolean]
+  # @argument editor_button[enabled] [Boolean]
   #   Set this to enable this feature
   #
-  # @argument editor_button[icon_url] [Optional, String]
+  # @argument editor_button[icon_url] [String]
   #   The url of the icon to show in the WYSIWYG editor
   #
-  # @argument editor_button[selection_width] [Optional, String]
+  # @argument editor_button[selection_width] [String]
   #   The width of the dialog the tool is launched in
   #
-  # @argument editor_button[selection_height] [Optional, String]
+  # @argument editor_button[selection_height] [String]
   #   The height of the dialog the tool is launched in
   #
-  # @argument resource_selection[url] [Optional, String]
+  # @argument resource_selection[url] [String]
   #   The url of the external tool
   #
-  # @argument resource_selection[enabled] [Optional, Boolean]
+  # @argument resource_selection[enabled] [Boolean]
   #   Set this to enable this feature
   #
-  # @argument resource_selection[icon_url] [Optional, String]
+  # @argument resource_selection[icon_url] [String]
   #   The url of the icon to show in the module external tool list
   #
-  # @argument resource_selection[selection_width] [Optional, String]
+  # @argument resource_selection[selection_width] [String]
   #   The width of the dialog the tool is launched in
   #
-  # @argument resource_selection[selection_height] [Optional, String]
+  # @argument resource_selection[selection_height] [String]
   #   The height of the dialog the tool is launched in
   #
-  # @argument config_type [Optional, String]
+  # @argument config_type [String]
   #   Configuration can be passed in as CC xml instead of using query
   #   parameters. If this value is "by_url" or "by_xml" then an xml
   #   configuration will be expected in either the "config_xml" or "config_url"
   #   parameter. Note that the name parameter overrides the tool name provided
   #   in the xml
   #
-  # @argument config_xml [Optional, String]
+  # @argument config_xml [String]
   #   XML tool configuration, as specified in the CC xml specification. This is
   #   required if "config_type" is set to "by_xml"
   #
-  # @argument config_url [Optional, String]
+  # @argument config_url [String]
   #   URL where the server can retrieve an XML tool configuration, as specified
   #   in the CC xml specification. This is required if "config_type" is set to
   #   "by_url"
@@ -464,7 +651,7 @@ class ExternalToolsController < ApplicationController
   # @example_request
   #
   #   This would create a tool on this course with two custom fields and a course navigation tab
-  #   curl 'http://<canvas>/api/v1/courses/<course_id>/external_tools' \ 
+  #   curl 'https://<canvas>/api/v1/courses/<course_id>/external_tools' \
   #        -H "Authorization: Bearer <token>" \ 
   #        -F 'name=LTI Example' \ 
   #        -F 'consumer_key=asdfg' \ 
@@ -480,7 +667,7 @@ class ExternalToolsController < ApplicationController
   # @example_request
   #
   #   This would create a tool on the account with navigation for the user profile page
-  #   curl 'http://<canvas>/api/v1/accounts/<account_id>/external_tools' \ 
+  #   curl 'https://<canvas>/api/v1/accounts/<account_id>/external_tools' \
   #        -H "Authorization: Bearer <token>" \ 
   #        -F 'name=LTI Example' \ 
   #        -F 'consumer_key=asdfg' \ 
@@ -494,7 +681,7 @@ class ExternalToolsController < ApplicationController
   # @example_request
   #
   #   This would create a tool on the account with configuration pulled from an external URL
-  #   curl 'http://<canvas>/api/v1/accounts/<account_id>/external_tools' \ 
+  #   curl 'https://<canvas>/api/v1/accounts/<account_id>/external_tools' \
   #        -H "Authorization: Bearer <token>" \ 
   #        -F 'name=LTI Example' \ 
   #        -F 'consumer_key=asdfg' \ 
@@ -507,6 +694,7 @@ class ExternalToolsController < ApplicationController
       set_tool_attributes(@tool, params[:external_tool] || params)
       respond_to do |format|
         if @tool.save
+          invalidate_nav_tabs_cache(@tool)
           if api_request?
             format.json { render :json => external_tool_json(@tool, @context, @current_user, session) }
           else
@@ -525,7 +713,7 @@ class ExternalToolsController < ApplicationController
   # @example_request
   #
   #   This would update the specified keys on this external tool
-  #   curl -X PUT 'http://<canvas>/api/v1/courses/<course_id>/external_tools/<external_tool_id>' \ 
+  #   curl -X PUT 'https://<canvas>/api/v1/courses/<course_id>/external_tools/<external_tool_id>' \
   #        -H "Authorization: Bearer <token>" \ 
   #        -F 'name=Public Example' \ 
   #        -F 'privacy_level=public'
@@ -535,6 +723,7 @@ class ExternalToolsController < ApplicationController
       respond_to do |format|
         set_tool_attributes(@tool, params[:external_tool] || params)
         if @tool.save
+          invalidate_nav_tabs_cache(@tool)
           if api_request?
             format.json { render :json => external_tool_json(@tool, @context, @current_user, session) }
           else
@@ -553,7 +742,7 @@ class ExternalToolsController < ApplicationController
   # @example_request
   #
   #   This would delete the specified external tool
-  #   curl -X DELETE 'http://<canvas>/api/v1/courses/<course_id>/external_tools/<external_tool_id>' \ 
+  #   curl -X DELETE 'https://<canvas>/api/v1/courses/<course_id>/external_tools/<external_tool_id>' \
   #        -H "Authorization: Bearer <token>"
   def destroy
     @tool = @context.context_external_tools.active.find(params[:id] || params[:external_tool_id])
@@ -561,6 +750,7 @@ class ExternalToolsController < ApplicationController
       respond_to do |format|
         if @tool.destroy
           if api_request?
+            invalidate_nav_tabs_cache(@tool)
             format.json { render :json => external_tool_json(@tool, @context, @current_user, session) }
           else
             format.json { render :json => @tool.as_json(:methods => [:readable_state, :custom_fields_string], :include_root => false) }
@@ -571,15 +761,57 @@ class ExternalToolsController < ApplicationController
       end
     end
   end
-  
+
   private
-  
+
   def set_tool_attributes(tool, params)
     attrs = ContextExternalTool::EXTENSION_TYPES
     attrs += [:name, :description, :url, :icon_url, :domain, :privacy_level, :consumer_key, :shared_secret,
-    :custom_fields, :custom_fields_string, :text, :config_type, :config_url, :config_xml]
+              :custom_fields, :custom_fields_string, :text, :config_type, :config_url, :config_xml, :not_selectable]
     attrs.each do |prop|
       tool.send("#{prop}=", params[prop]) if params.has_key?(prop)
     end
   end
+
+  def invalidate_nav_tabs_cache(tool)
+    if tool.has_placement?(:user_navigation) || tool.has_placement?(:course_navigation) || tool.has_placement?(:account_navigation)
+      Lti::NavigationCache.new(@domain_root_account).invalidate_cache_key
+    end
+  end
+
+  def require_access_to_context
+    if @context.is_a?(Account)
+      require_user
+    elsif !@context.grants_right?(@current_user, session, :read)
+      render_unauthorized_action
+    end
+  end
+
+  def variable_expander(opts = {})
+    default_opts = {
+      current_user: @current_user,
+      current_pseudonym: @current_pseudonym,
+      tool: @tool }
+    Lti::VariableExpander.new(@domain_root_account, @context, self, default_opts.merge(opts))
+  end
+
+  def default_lti_params
+    lti_helper = Lti::SubstitutionsHelper.new(@context, @domain_root_account, @current_user)
+
+    params = {
+      context_id: Lti::Asset.opaque_identifier_for(@context),
+      tool_consumer_instance_guid: @domain_root_account.lti_guid,
+      roles: lti_helper.current_lis_roles,
+      launch_presentation_locale: I18n.locale || I18n.default_locale.to_s,
+      launch_presentation_document_target: 'iframe',
+      ext_roles: lti_helper.all_roles,
+      # launch_presentation_width:,
+      # launch_presentation_height:,
+      # launch_presentation_return_url: return_url,
+    }
+
+    params.merge!(user_id: Lti::Asset.opaque_identifier_for(@current_user)) if @current_user
+    params
+  end
+
 end

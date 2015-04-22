@@ -12,7 +12,7 @@ define [
     template: template
 
     GROUP_CATEGORY_ID = '#assignment_group_category_id'
-    HAS_GROUP_CATEGORY = '#assignment_has_group_category'
+    HAS_GROUP_CATEGORY = '#has_group_category'
     GROUP_CATEGORY_OPTIONS = '#group_category_options'
 
     els: do ->
@@ -31,11 +31,15 @@ define [
     @optionProperty 'parentModel'
     @optionProperty 'groupCategories'
     @optionProperty 'nested'
+    @optionProperty 'hideGradeIndividually'
+    @optionProperty 'sectionLabel'
+    @optionProperty 'fieldLabel'
+    @optionProperty 'lockedMessage'
 
     showGroupCategoryCreateDialog: =>
       if @$groupCategoryID.val() == 'new'
         # TODO: Yikes, we need to pull the javascript out of manage_groups.js
-        # and get rid of this global thing 
+        # and get rid of this global thing
         window.addGroupCategory (data) =>
           group = data[0].group_category
           $newCategory = $('<option>')
@@ -47,24 +51,38 @@ define [
 
     toggleGroupCategoryOptions: =>
       @$groupCategoryOptions.toggleAccessibly @$hasGroupCategory.prop('checked')
+
       if @$hasGroupCategory.prop('checked') and @groupCategories.length == 0
         @showGroupCategoryCreateDialog()
 
     toJSON: =>
-      frozenAttributes = @parentModel.frozenAttributes()
+      frozenAttributes = @parentModel.frozenAttributes?() || []
+      groupCategoryFrozen = _.include frozenAttributes, 'group_category_id'
+      groupCategoryLocked = !@parentModel.canGroup()
 
       groupCategoryId: @parentModel.groupCategoryId()
       groupCategories: @groupCategories
-      gradeGroupStudentsIndividually: @parentModel.gradeGroupStudentsIndividually()
-      frozenAttributes: frozenAttributes
-      groupCategoryIdFrozen: _.include(frozenAttributes, 'group_category_id')
+      hideGradeIndividually: @hideGradeIndividually
+      gradeGroupStudentsIndividually: !@hideGradeIndividually && @parentModel.gradeGroupStudentsIndividually()
+      groupCategoryLocked: groupCategoryLocked
+
+      hasGroupCategoryDisabled:  groupCategoryFrozen || groupCategoryLocked
+      gradeIndividuallyDisabled: groupCategoryFrozen
+      groupCategoryIdDisabled:   groupCategoryFrozen || groupCategoryLocked
+      differentiatedAssignmentsEnabled: @parentModel.differentiatedAssignmentsEnabled()
+
+      sectionLabel: @sectionLabel
+      fieldLabel: @fieldLabel
+      lockedMessage: @lockedMessage
+      ariaChecked: if @parentModel.groupCategoryId() then 'true' else 'false'
+
       nested: @nested
       prefix: 'assignment' if @nested
 
     filterFormData: (data) =>
       hasGroupCategory = data.has_group_category
       delete data.has_group_category
-      unless hasGroupCategory is '1'
+      if hasGroupCategory == '0'
         data.group_category_id = null
         data.grade_group_students_individually = false
       data

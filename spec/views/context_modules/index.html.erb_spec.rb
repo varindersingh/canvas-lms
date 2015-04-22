@@ -20,26 +20,50 @@ require File.expand_path(File.dirname(__FILE__) + '/../../spec_helper')
 require File.expand_path(File.dirname(__FILE__) + '/../views_helper')
 
 describe "/context_modules/index" do
+  before :each do
+    assigns[:body_classes] = []
+    assigns[:menu_tools] = Hash.new([])
+    assigns[:collapsed_modules] = []
+  end
+
   it "should render" do
     course
     view_context(@course, @user)
     assigns[:modules] = @course.context_modules.active
-    assigns[:collapsed_modules] = []
     render 'context_modules/index'
-    response.should_not be_nil
+    expect(response).not_to be_nil
   end
 
   it "should show content_tags" do
     course
     context_module = @course.context_modules.create!
     content_tag = context_module.add_item :type => 'context_module_sub_header'
+    content_tag.publish! if content_tag.unpublished?
     view_context(@course, @user)
     assigns[:modules] = @course.context_modules.active
-    assigns[:collapsed_modules] = []
     render 'context_modules/index'
-    response.should_not be_nil
+    expect(response).not_to be_nil
     page = Nokogiri('<document>' + response.body + '</document>')
-    page.css("#context_module_item_#{content_tag.id}").length.should == 1
+    expect(page.css("#context_module_item_#{content_tag.id}").length).to eq 1
+  end
+
+  it "should show unpublished content_tags" do
+    course_with_teacher(:active_all => true)
+    wiki_page = wiki_page_model(:course => @course)
+    wiki_page.workflow_state = 'unpublished'
+    wiki_page.save!
+
+    context_module = @course.context_modules.create!
+    content_tag = context_module.add_item(:type => 'wiki_page', :id => wiki_page.id)
+    expect(content_tag.workflow_state).to eq 'unpublished'
+
+    view_context(@course, @user)
+    assigns[:modules] = @course.context_modules.active
+    render 'context_modules/index'
+
+    expect(response).not_to be_nil
+    page = Nokogiri('<document>' + response.body + '</document>')
+    expect(page.css("#context_module_item_#{content_tag.id}").length).to eq 1
   end
 
   it "should not show deleted content_tags" do
@@ -49,10 +73,9 @@ describe "/context_modules/index" do
     content_tag.destroy
     view_context(@course, @user)
     assigns[:modules] = @course.context_modules.active
-    assigns[:collapsed_modules] = []
     render 'context_modules/index'
-    response.should_not be_nil
+    expect(response).not_to be_nil
     page = Nokogiri('<document>' + response.body + '</document>')
-    page.css("#context_module_item_#{content_tag.id}").length.should == 0
+    expect(page.css("#context_module_item_#{content_tag.id}").length).to eq 0
   end
 end

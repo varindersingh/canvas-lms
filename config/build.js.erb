@@ -1,7 +1,7 @@
 ({
 
   // file optimizations
-  optimize: "uglify",
+  optimize: "none",
 
   // continue to let Jammit do its thing
   optimizeCss: "none",
@@ -19,8 +19,16 @@
 
   paths: <%= paths %>,
 
+  packages: <%= packages %>,
+
   // non-amd shims
-  use: <%= shims %>,
+  shim: <%= shims %>,
+
+  // client app maps
+  map: <%= map %>,
+
+  // client app bundles
+  bundles: <%= bundles %>,
 
   // which modules should have their dependencies concatenated into them
   modules: [
@@ -34,7 +42,6 @@
       // this is the intersection of common and tinymce, we need to script this
       // config file...
       exclude: [
-        'order',
         'i18n',
         'str/escapeRegex',
         'vendor/date',
@@ -57,9 +64,6 @@
         'vendor/jquery.ba-hashchange',
         'vendor/jqueryui/effects/drop',
         'compiled/jquery.rails_flash_notifications',
-        'translations/scribd',
-        'i18n!scribd',
-        'vendor/scribd.view',
         'jquery.dropdownList',
         'vendor/jqueryui/progressbar',
         'translations/media_comments',
@@ -82,7 +86,8 @@
         'jquery.instructure_forms',
         'jquery.ajaxJSON',
         'jquery.instructure_misc_helpers',
-        'media_comments'
+        'media_comments',
+        'translations/_core'
       ]
     },
 

@@ -27,7 +27,7 @@ define [
         contexts: ENV.CONTEXTS
         placeholder: I18n.t 'link_students_placeholder', 'Enter a student name'
         change: (tokens) =>
-          @students = _.map tokens, (id) -> parseInt id
+          @students = tokens
         selector:
           baseData:
             type: 'user'
@@ -38,7 +38,7 @@ define [
           browser:
             data:
               per_page: 100
-              type: 'user'
+              types: ['user']
       input = @$('#student_input').data('token_input')
       input.$fakeInput.css('width', '100%')
 

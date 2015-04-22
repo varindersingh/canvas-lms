@@ -18,24 +18,53 @@
 
 class LearningOutcome < ActiveRecord::Base
   include Workflow
-  attr_accessible :context, :description, :short_description, :title, :rubric_criterion, :vendor_guid
+  attr_accessible :context, :description, :short_description, :title, :display_name
+  attr_accessible :rubric_criterion, :vendor_guid, :calculation_method, :calculation_int
+
   belongs_to :context, :polymorphic => true
+  validates_inclusion_of :context_type, :allow_nil => true, :in => ['Account', 'Course']
   has_many :learning_outcome_results
   has_many :alignments, :class_name => 'ContentTag', :conditions => ['content_tags.tag_type = ? AND content_tags.workflow_state != ?', 'learning_outcome', 'deleted']
+
+  EXPORTABLE_ATTRIBUTES = [:id, :context_id, :context_type, :short_description, :context_code, :description, :data, :workflow_state, :created_at, :updated_at, :vendor_guid, :low_grade, :high_grade]
+  EXPORTABLE_ASSOCIATIONS = [:context, :learning_outcome_results, :alignments]
   serialize :data
+
+  before_validation :infer_default_calculation_method, :adjust_calculation_int
   before_save :infer_defaults
+
+  CALCULATION_METHODS = {
+    'decaying_average' => "Decaying Average",
+    'n_mastery'        => "n Number of Times",
+    'highest'          => "Highest Score",
+    'latest'           => "Most Recent Score",
+  }
+  VALID_CALCULATION_INTS = {
+    "decaying_average" => (1..99),
+    "n_mastery" => (2..5),
+    "highest" => [],
+    "latest" => [],
+  }
+
   validates_length_of :description, :maximum => maximum_text_length, :allow_nil => true, :allow_blank => true
   validates_length_of :short_description, :maximum => maximum_string_length
+  validates_inclusion_of :calculation_method, :in => CALCULATION_METHODS.keys,
+    :message => t(
+      "calculation_method must be one of the following: %{calc_methods}",
+      :calc_methods => CALCULATION_METHODS.keys.to_s
+    )
   validates_presence_of :short_description, :workflow_state
-  sanitize_field :description, Instructure::SanitizeField::SANITIZE
+  sanitize_field :description, CanvasSanitize::SANITIZE
+  validate :calculation_changes_after_asessing, if: :assessed?
+  validate :validate_calculation_int, unless: :assessed?
 
   set_policy do
     # managing a contextual outcome requires manage_outcomes on the outcome's context
-    given {|user, session| self.context_id && self.cached_context_grants_right?(user, session, :manage_outcomes) }
+    given {|user, session| self.context_id && self.context.grants_right?(user, session, :manage_outcomes) }
     can :create and can :read and can :update and can :delete
 
     # reading a contextual outcome is also allowed by read_outcomes on the outcome's context
-    given {|user, session| self.context_id && self.cached_context_grants_right?(user, session, :read_outcomes) }
+    given {|user, session| self.context_id && self.context.grants_right?(user, session, :read_outcomes) }
     can :read
 
     # managing a global outcome requires manage_global_outcomes on the site_admin
@@ -43,22 +72,104 @@ class LearningOutcome < ActiveRecord::Base
     can :create and can :read and can :update and can :delete
 
     # reading a global outcome is also allowed by just being logged in
-    given {|user, session| self.context_id.nil? && user }
+    given {|user| self.context_id.nil? && user }
     can :read
   end
-  
+
   def infer_defaults
     if self.data && self.data[:rubric_criterion]
       self.data[:rubric_criterion][:description] = self.short_description
     end
     self.context_code = "#{self.context_type.underscore}_#{self.context_id}" rescue nil
+
+    # if we are changing the calculation_method but not the calculation_int, set the int to the default value
+    if calculation_method_changed? && !calculation_int_changed?
+      self.calculation_int = default_calculation_int
+    end
   end
-  
+
+  def calculation_changes_after_asessing
+    # if we've been used to assess a student, refuse to accept any changes to our calculation options
+    if calculation_method_changed?
+      errors.add(:calculation_method, t(
+        "This outcome has been used to assess a student. The calculation method is locked",
+      ))
+    end
+
+    if calculation_int_changed?
+      errors.add(:calculation_int, t(
+        "This outcome has been used to assess a student. The calculation value is locked"
+      ))
+    end
+  end
+
+  def validate_calculation_int
+    unless valid_calculation_int?(calculation_int, calculation_method)
+      if valid_calculation_ints.to_a.empty?
+        errors.add(:calculation_int, t(
+          "A calculation value is not used with this calculation method"
+        ))
+      else
+        errors.add(:calculation_int, t(
+          "'%{calculation_int}' is not a valid value for this calculation method. The value must be between '%{valid_calculation_ints_min}' and '%{valid_calculation_ints_max}'",
+          :calculation_int => calculation_int,
+          :valid_calculation_ints_min => valid_calculation_ints.min,
+          :valid_calculation_ints_max => valid_calculation_ints.max
+        ))
+      end
+    end
+  end
+
+  def valid_calculation_method?(method=self.calculation_method)
+    CALCULATION_METHODS.keys.include?(method)
+  end
+
+  def valid_calculation_ints(method=self.calculation_method)
+    VALID_CALCULATION_INTS[method]
+  end
+
+  def valid_calculation_int?(int, method=self.calculation_method)
+    if valid_calculation_method?(method)
+      valid_ints = valid_calculation_ints(method)
+      (int.nil? && valid_ints.to_a.empty?) || valid_ints.include?(int)
+    else
+      true
+    end
+  end
+
+  def infer_default_calculation_method
+    # If we are a new record, or are not changing our calculation_method (such as on a pre-existing
+    # record or an import), then assume the default of highest
+    if new_record? || !calculation_method_changed?
+      self.calculation_method ||= default_calculation_method
+    end
+  end
+
+  def adjust_calculation_int
+    # If we are setting calculation_method to latest or highest,
+    # set calculation_int nil unless it is a new record (meaning it was set explicitly)
+    if %w[highest latest].include?(calculation_method) && calculation_method_changed?
+      self.calculation_int = nil unless new_record?
+    end
+  end
+
+  def default_calculation_method
+    "highest"
+  end
+
+  def default_calculation_int(method=self.calculation_method)
+    case method
+    when 'decaying_average' then 75
+    when 'n_mastery' then 5
+    else nil
+    end
+  end
+
   def align(asset, context, opts={})
-    tag = self.alignments.find_by_content_id_and_content_type_and_tag_type_and_context_id_and_context_type(asset.id, asset.class.to_s, 'learning_outcome', context.id, context.class.to_s)
+    tag = self.alignments.where(content_id: asset, content_type: asset.class.to_s, tag_type: 'learning_outcome', context_id: context, context_type: context.class.to_s).first
     tag ||= self.alignments.create(:content => asset, :tag_type => 'learning_outcome', :context => context)
     mastery_type = opts[:mastery_type]
-    if mastery_type == 'points'
+    if mastery_type == 'points' || mastery_type == 'points_mastery'
       mastery_type = 'points_mastery'
     else
       mastery_type = 'explicit_mastery'
@@ -69,12 +180,12 @@ class LearningOutcome < ActiveRecord::Base
     tag.save
     tag
   end
-  
+
   def reorder_alignments(context, order)
     order_hash = {}
     order.each_with_index{|o, i| order_hash[o.to_i] = i; order_hash[o] = i }
-    tags = self.alignments.find_all_by_context_id_and_context_type_and_tag_type(context.id, context.class.to_s, 'learning_outcome')
-    tags = tags.sort_by{|t| order_hash[t.id] || order_hash[t.content_asset_string] || SortLast }
+    tags = self.alignments.where(context_id: context, context_type: context.class.to_s, tag_type: 'learning_outcome')
+    tags = tags.sort_by{|t| order_hash[t.id] || order_hash[t.content_asset_string] || CanvasSort::Last }
     updates = []
     tags.each_with_index do |tag, idx|
       tag.position = idx + 1
@@ -84,9 +195,13 @@ class LearningOutcome < ActiveRecord::Base
     self.touch
     tags
   end
-  
-  def remove_alignment(asset, context, opts={})
-    tag = self.alignments.find_by_content_id_and_content_type_and_tag_type_and_context_id_and_context_type(asset.id, asset.class.to_s, 'learning_outcome', context.id, context.class.to_s)
+
+  def remove_alignment(alignment_id, context)
+    tag = self.alignments.where({
+      context_id: context,
+      context_type: context.class_name,
+      id: alignment_id
+    }).first
     tag.destroy if tag
     tag
   end
@@ -106,7 +221,7 @@ class LearningOutcome < ActiveRecord::Base
 
     missing_outcome_ids = new_outcome_ids - old_outcome_ids
     unless missing_outcome_ids.empty?
-      LearningOutcome.find_all_by_id(missing_outcome_ids).each do |learning_outcome|
+      LearningOutcome.where(id: missing_outcome_ids).each do |learning_outcome|
         learning_outcome.align(asset, context)
       end
     end
@@ -119,21 +234,23 @@ class LearningOutcome < ActiveRecord::Base
   def title=(new_title)
     self.short_description = new_title
   end
-  
+
   workflow do
     state :active
     state :retired
     state :deleted
   end
-  
-  scope :active, where("workflow_state<>'deleted'")
 
   def cached_context_short_name
     @cached_context_name ||= Rails.cache.fetch(['short_name_lookup', self.context_code].cache_key) do
       self.context.short_name rescue ""
     end
   end
-  
+
+  def rubric_criterion
+    data && data[:rubric_criterion]
+  end
+
   def rubric_criterion=(hash)
     self.data ||= {}
 
@@ -176,11 +293,15 @@ class LearningOutcome < ActiveRecord::Base
     self.workflow_state = 'deleted'
     save!
   end
-  
+
+  def assessed?
+    learning_outcome_results.exists?
+  end
+
   def tie_to(context)
     @tied_context = context
   end
-  
+
   def artifacts_count_for_tied_context
     codes = [@tied_context.asset_string]
     if @tied_context.is_a?(Account)
@@ -192,120 +313,23 @@ class LearningOutcome < ActiveRecord::Base
     end
     self.learning_outcome_results.for_context_codes(codes).count
   end
-  
-  def clone_for(context, parent)
-    lo = context.created_learning_outcomes.new
-    lo.context = context
-    lo.short_description = self.short_description
-    lo.description = self.description
-    lo.data = self.data
-    lo.save
-    parent.add_outcome(lo)
-    
-    lo
-  end
 
   def self.delete_if_unused(ids)
-    tags = ContentTag.active.find_all_by_content_id_and_content_type(ids, 'LearningOutcome')
+    tags = ContentTag.active.where(content_id: ids, content_type: 'LearningOutcome').to_a
     to_delete = []
     ids.each do |id|
       to_delete << id unless tags.any?{|t| t.content_id == id }
     end
     LearningOutcome.where(:id => to_delete).update_all(:workflow_state => 'deleted', :updated_at => Time.now.utc)
   end
-  
-  def self.process_migration(data, migration)
-    outcomes = data['learning_outcomes'] ? data['learning_outcomes'] : []
-    migration.outcome_to_id_map = {}
-    outcomes.each do |outcome|
-      begin
-        if outcome[:type] == 'learning_outcome_group'
-          LearningOutcomeGroup.import_from_migration(outcome, migration)
-        else
-          LearningOutcome.import_from_migration(outcome, migration)
-        end
-      rescue
-        migration.add_import_warning(t('#migration.learning_outcome_type', "Learning Outcome"), outcome[:title], $!)
-      end
-    end
-  end
-
-  def self.import_from_migration(hash, migration, item=nil)
-    context = migration.context
-    hash = hash.with_indifferent_access
-    outcome = nil
-    if !item && hash[:external_identifier]
-      if hash[:is_global_outcome]
-        outcome = LearningOutcome.active.find_by_id_and_context_id(hash[:external_identifier], nil)
-      else
-        outcome = context.available_outcome(hash[:external_identifier])
-      end
-      
-      if outcome
-        # Help prevent linking to the wrong outcome if copying into a different install of canvas
-        outcome = nil if outcome.short_description != hash[:title]
-      end
-      
-      if !outcome
-        migration.add_warning(t(:no_context_found, %{The external Learning Outcome couldn't be found for "%{title}", creating a copy.}, :title => hash[:title]))
-      end
-    end
-    
-    if !outcome
-      if hash[:is_global_standard]
-        if Account.site_admin.grants_right?(migration.user, :manage_global_outcomes)
-          # import from vendor with global outcomes
-          context = nil
-          hash[:learning_outcome_group] ||= LearningOutcomeGroup.global_root_outcome_group
-          item ||= LearningOutcome.global.find_by_migration_id(hash[:migration_id]) if hash[:migration_id]
-          item ||= LearningOutcome.global.find_by_vendor_guid(hash[:vendor_guid]) if hash[:vendor_guid]
-          item ||= LearningOutcome.new
-        else
-          migration.add_warning(t(:no_global_permission, %{You're not allowed to manage global outcomes, can't add "%{title}"}, :title => hash[:title]))
-          return
-        end
-      else
-        item ||= find_by_context_id_and_context_type_and_migration_id(context.id, context.class.to_s, hash[:migration_id]) if hash[:migration_id]
-        item ||= context.created_learning_outcomes.new
-        item.context = context
-      end
-      item.migration_id = hash[:migration_id]
-      item.vendor_guid = hash[:vendor_guid]
-      item.low_grade = hash[:low_grade]
-      item.high_grade = hash[:high_grade]
-      item.workflow_state = 'active' if item.deleted?
-      item.short_description = hash[:title]
-      item.description = hash[:description]
-      
-      if hash[:ratings]
-        item.data = {:rubric_criterion=>{}}
-        item.data[:rubric_criterion][:ratings] = hash[:ratings] ? hash[:ratings].map(&:symbolize_keys) : []
-        item.data[:rubric_criterion][:mastery_points] = hash[:mastery_points]
-        item.data[:rubric_criterion][:points_possible] = hash[:points_possible]
-        item.data[:rubric_criterion][:description] = item.short_description || item.description
-      end
-      
-      item.save!
-      context.imported_migration_items << item if context && context.imported_migration_items && item.new_record?
-    else
-      item = outcome
-    end
-    
-    log = hash[:learning_outcome_group] || context.root_outcome_group
-    log.add_outcome(item)
-    
-    migration.outcome_to_id_map[hash[:migration_id]] = item.id
-
-    item
-  end
 
   scope :for_context_codes, lambda { |codes| where(:context_code => codes) }
-  scope :active, where("learning_outcomes.workflow_state<>'deleted'")
+  scope :active, -> { where("learning_outcomes.workflow_state<>'deleted'") }
   scope :has_result_for, lambda { |user|
     joins(:learning_outcome_results).
         where("learning_outcomes.id=learning_outcome_results.learning_outcome_id AND learning_outcome_results.user_id=?", user).
         order(best_unicode_collation_key('short_description'))
   }
 
-  scope :global, where(:context_id => nil)
+  scope :global, -> { where(:context_id => nil) }
 end

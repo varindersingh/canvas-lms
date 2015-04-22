@@ -14,8 +14,25 @@ define [
 
     course: {}
 
+    selectedMessages: []
+
+    autoFetch: true
+
     events:
       'click': 'onClick'
+
+    constructor: ->
+      super
+      @attachEvents()
+
+    attachEvents: ->
+      @collection.on('change:selected', @trackSelectedMessages)
+
+    trackSelectedMessages: (model) =>
+      if model.get('selected')
+        @selectedMessages.push(model)
+      else
+        @selectedMessages.splice(@selectedMessages.indexOf(model), 1)
 
     onClick: (e) ->
       return unless e.target is @el
@@ -23,6 +40,9 @@ define [
 
     updateCourse: (course) ->
       @course = course
+
+    selectedMessage: ->
+      @selectedMessages[0]
 
     updateMessage: (message, thread) =>
       selectedThread = @collection.where(selected: true)[0]
@@ -39,3 +59,6 @@ define [
       super
       @$('.current-context').text(@course.name)
       @$('.list-header')[if @course.name then 'show' else 'hide']()
+
+    selectAll: ->
+      @collection.each (x) -> x.set('selected', true)

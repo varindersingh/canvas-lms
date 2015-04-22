@@ -1,14 +1,16 @@
 define [
+  'jquery'
   'underscore'
   'compiled/xhr/RemoteSelect'
-], (_, RemoteSelect) ->
+], ($, _, RemoteSelect) ->
   module 'RemoteSelect',
     setup: ->
       @response = [200, { 'Content-Type': 'application/json' }, '[{ "label": "one", "value": 1 }, {"label": "two", "value": 2 }]']
-      @el       = $('<select id="test-select"></select>').appendTo('body')
+      @el       = $('<select id="test-select"></select>').appendTo('#fixtures')
 
     teardown: ->
       @el.remove()
+      document.getElementById("fixtures").innerHTML = ""
 
   test 'should load results into a select', ->
     server = @sandbox.useFakeServer()

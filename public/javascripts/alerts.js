@@ -19,12 +19,13 @@
 define([
   'i18n!alerts',
   'jquery', // $
+  'str/htmlEscape',
   'jquery.ajaxJSON', // ajaxJSON
   'jquery.instructure_forms', // validateForm, formErrors, errorBox
   'jquery.instructure_misc_helpers', // replaceTags
   'vendor/jquery.ba-tinypubsub', // /\.publish/
   'jqueryui/button' // /\.button/
-], function(I18n, $) {
+], function(I18n, $, htmlEscape) {
 
   $(function () {
     var $list = $('.alerts_list');
@@ -57,9 +58,13 @@ define([
     }
 
     var createElement = function(key, element, value, lookup) {
+      // xsslint safeString.identifier element
       var $element = $("<" + element + " />");
       $element.data('value', key);
-      $element.html(lookup[key][value]);
+      var contentHtml = htmlEscape(lookup[key][value]).toString();
+      // see placeholder in _alerts.html.erb
+      contentHtml = contentHtml.replace("%{count}", "<span class='displaying' /><input type='text' name='alert[criteria][][threshold]' class='editing' size='2' />");
+      $element.html(contentHtml);
       if(element == 'li') {
         $element.append(' ');
         $element.append($list.find('>.delete_item_link').clone().toggle());
@@ -69,6 +74,7 @@ define([
       return $element;
     }
 
+    // xsslint jqueryObject.function createRecipient createCriterion
     var createRecipient = function(recipient, element) {
       $element = createElement(recipient, element, 'label', ENV.ALERTS.POSSIBLE_RECIPIENTS);
       if(element == 'li') {
@@ -108,7 +114,9 @@ define([
       var $recipients = $alert.find('.recipients');
       $recipients.empty();
       for(var idx in data.recipients) {
-        $recipients.append(createRecipient(data.recipients[idx], 'li'));
+        if (ENV.ALERTS.POSSIBLE_RECIPIENTS[data.recipients[idx]]) {
+          $recipients.append(createRecipient(data.recipients[idx], 'li'));
+        }
       }
       if(data.repetition) {
         $alert.find('input[name="repetition"][value="value"]').attr('checked', true);
@@ -345,6 +353,9 @@ define([
           $error_box.remove();
         });
       }
+    }).delegate('label.repetition', 'click', function(event){
+      event.preventDefault();
+      $(this).parents('.alert').find('input[name="repetition"]').prop('checked', true);
     });
   });
 });

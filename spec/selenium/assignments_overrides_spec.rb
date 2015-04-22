@@ -3,7 +3,7 @@ require File.expand_path(File.dirname(__FILE__) + '/helpers/assignment_overrides
 
 describe "assignment groups" do
   include AssignmentOverridesSeleniumHelper
-  it_should_behave_like "in-process server selenium tests"
+  include_examples "in-process server selenium tests"
 
   context "as a teacher" do
 
@@ -19,49 +19,46 @@ describe "assignment groups" do
     it "should create an assignment with default dates" do
       visit_new_assignment_page
       fill_assignment_title 'vdd assignment'
-      toggle_advanced_options
       fill_assignment_overrides
+      click_option('#assignment_submission_type', 'No Submission')
       update_assignment!
-      a = Assignment.find_by_title('vdd assignment')
+      a = Assignment.where(title: 'vdd assignment').first
       compare_assignment_times(a)
     end
 
     it "should load existing due data into the form" do
       assignment = create_assignment!
       visit_assignment_edit_page(assignment)
-      toggle_advanced_options
 
-      first_due_at_element.attribute(:value).
-        should match due_at.strftime('%b %-d')
-      first_unlock_at_element.attribute(:value).
-        should match unlock_at.strftime('%b %-d')
-      first_lock_at_element.attribute(:value).
-        should match lock_at.strftime('%b %-d')
+      expect(first_due_at_element.attribute(:value)).
+        to match due_at.strftime('%b %-d')
+      expect(first_unlock_at_element.attribute(:value)).
+        to match unlock_at.strftime('%b %-d')
+      expect(first_lock_at_element.attribute(:value)).
+        to match lock_at.strftime('%b %-d')
     end
 
     it "should edit a due date" do
       assignment = create_assignment!
       visit_assignment_edit_page(assignment)
-      toggle_advanced_options
 
       # set due_at, lock_at, unlock_at
       first_due_at_element.clear
       first_due_at_element.send_keys(due_at.strftime('%b %-d, %y'))
       update_assignment!
 
-      assignment.reload.due_at.strftime('%b %-d, %y').
-        should == due_at.to_date.strftime('%b %-d, %y')
+      expect(assignment.reload.due_at.strftime('%b %-d, %y')).
+        to eq due_at.to_date.strftime('%b %-d, %y')
     end
 
     it "should clear a due date" do
       assign = @course.assignments.create!(:title => "due tomorrow", :due_at => Time.zone.now + 2.days)
       get "/courses/#{@course.id}/assignments/#{assign.id}/edit"
 
-      f('#assignment_toggle_advanced_options').click
       f('.due-date-overrides [name="due_at"]').clear
       expect_new_page_load { submit_form('#edit_assignment_form') }
 
-      assign.reload.due_at.should be_nil
+      expect(assign.reload.due_at).to be_nil
     end
 
     it "should allow setting overrides" do
@@ -72,13 +69,12 @@ describe "assignment groups" do
 
       assign = create_assignment!
       visit_assignment_edit_page(assign)
-      toggle_advanced_options
 
-      sleep 5
+      wait_for_ajaximations
       click_option('.due-date-row:first select', default_section.name)
       first_due_at_element.clear
       first_due_at_element.
-        send_keys(default_section_due.strftime('%b %-d, %y'))
+      send_keys(default_section_due.strftime('%b %-d, %y'))
 
       add_override
 
@@ -88,46 +84,95 @@ describe "assignment groups" do
 
       update_assignment!
       overrides = assign.reload.assignment_overrides
-      overrides.count.should == 2
+      expect(overrides.count).to eq 2
       default_override = overrides.detect{ |o| o.set_id == default_section.id }
-      default_override.due_at.strftime('%b %-d, %y').
-        should == default_section_due.to_date.strftime('%b %-d, %y')
+      expect(default_override.due_at.strftime('%b %-d, %y')).
+        to eq default_section_due.to_date.strftime('%b %-d, %y')
       other_override = overrides.detect{ |o| o.set_id == other_section.id }
-      other_override.due_at.strftime('%b %-d, %y').
-        should == other_section_due.to_date.strftime('%b %-d, %y')
+      expect(other_override.due_at.strftime('%b %-d, %y')).
+        to eq other_section_due.to_date.strftime('%b %-d, %y')
+    end
+
+    it "should validate override dates against proper section" do
+      default_section = @course.course_sections.first
+      date = Time.zone.now
+      date2 = Time.zone.now - 10.days
+      due_date = Time.zone.now + 5.days
+      section1 = @course.course_sections.create!(:name => "Section 9", :restrict_enrollments_to_section_dates => true, :start_at => date)
+      section2 = @course.course_sections.create!(:name => "Section 31", :restrict_enrollments_to_section_dates => true, :end_at => date2)
+
+      assign = create_assignment!
+      visit_assignment_edit_page(assign)
+      wait_for_ajaximations
+      click_option('.due-date-row:first select', section2.name)
+      add_override
+      select_last_override_section(section1.name)
+      first_due_at_element.clear
+      first_unlock_at_element.clear
+      first_lock_at_element.clear
+      last_due_at_element.
+        send_keys(due_date.strftime('%b %-d, %y'))
+      submit_form('#edit_assignment_form')
+      ffj(".btn-primary:last").last.click
+      wait_for_ajaximations
+      overrides = assign.reload.assignment_overrides
+      section_override = overrides.detect{ |o| o.set_id == section1.id }
+      expect(section_override.due_at.strftime('%b %-d, %y')).
+        to eq due_date.strftime('%b %-d, %y')
+    end
+
+    it "properly validates identical calendar dates when saving and editing" do
+      shared_date = "October 12 2014"
+      default_section = @course.course_sections.first
+      other_section = @course.course_sections.create!(:name => "Section 31", :restrict_enrollments_to_section_dates => true, :end_at => shared_date)
+      visit_new_assignment_page
+      wait_for_ajaximations
+
+      fill_assignment_title 'validation assignment'
+      fill_assignment_overrides
+      add_override
+      select_last_override_section(other_section.name)
+      last_due_at_element.send_keys(shared_date)
+      click_option('#assignment_submission_type', 'No Submission')
+      update_assignment!
+      f(".edit_assignment_link").click
+      wait_for_ajaximations
+
+      update_assignment!
     end
 
     it "should show a vdd tooltip summary on the course assignments page" do
       assignment = create_assignment!
       get "/courses/#{@course.id}/assignments"
-      f('.assignment_list .assignment_due').should_not include_text "Multiple Due Dates"
+      expect(f('.assignment .assignment-date-due')).not_to include_text "Multiple Dates"
       add_due_date_override(assignment)
 
       get "/courses/#{@course.id}/assignments"
-      f('.assignment_list .assignment_due').should include_text "Multiple Due Dates"
-      driver.mouse.move_to f(".assignment_list .assignment_due a")
+      expect(f('.assignment .assignment-date-due')).to include_text "Multiple Dates"
+      driver.mouse.move_to f(".assignment .assignment-date-due a")
       wait_for_ajaximations
 
       tooltip = fj('.vdd_tooltip_content:visible')
-      tooltip.should include_text 'New Section'
-      tooltip.should include_text 'Everyone else'
+      expect(tooltip).to include_text 'New Section'
+      expect(tooltip).to include_text 'Everyone else'
+    end
+  end
+
+  context "as a student" do
+
+    let(:unlock_at) { Time.zone.now - 2.days }
+    let(:lock_at) { Time.zone.now + 4.days }
+
+    before(:once) do
+      make_full_screen
+      course_with_student_logged_in(:active_all => true)
     end
 
-    it "should show a vdd tooltip summary on the global assignments page" do
-      assignment = create_assignment!
-      get "/assignments"
-      f('.group_assignment .date_text').should_not include_text "Multiple Due Dates"
-      add_due_date_override(assignment)
-
-      get "/assignments"
-      f('.group_assignment .date_text').should include_text "Multiple Due Dates"
-      driver.mouse.move_to f(".group_assignment .date_text a")
+    it "should show the available date range when overrides are set" do
+      assign = create_assignment!
+      get "/courses/#{@course.id}/assignments/#{assign.id}"
       wait_for_ajaximations
-
-      tooltip = fj('.vdd_tooltip_content:visible')
-      tooltip.should include_text 'New Section'
-      tooltip.should include_text 'Everyone else'
+      expect(f('.student-assignment-overview')).to include_text 'Available'
     end
-
   end
 end

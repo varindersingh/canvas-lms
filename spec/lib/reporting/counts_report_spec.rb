@@ -29,19 +29,19 @@ describe Reporting::CountsReport do
 
     it "should create a detailed report for each account" do
       Reporting::CountsReport.process
-      @account1.report_snapshots.detailed.first.should_not be_nil
+      expect(@account1.report_snapshots.detailed.first).not_to be_nil
       snapshot = @account2.report_snapshots.detailed.first
-      snapshot.should_not be_nil
-      snapshot.shard.should == @shard1
+      expect(snapshot).not_to be_nil
+      expect(snapshot.shard).to eq @shard1
     end
   end
 
   context "sharding" do
     specs_require_sharding
-    it_should_behave_like "counts_report"
+    include_examples "counts_report"
   end
 
-  it_should_behave_like "counts_report"
+  include_examples "counts_report"
 
   describe "detailed report" do
     describe "courses" do
@@ -49,7 +49,7 @@ describe Reporting::CountsReport do
         course(:account => @account1, :active_all => 1)
         Reporting::CountsReport.process
         @snapshot = @account1.report_snapshots.detailed.first
-        @snapshot.data['courses'].should == 1
+        expect(@snapshot.data['courses']).to eq 1
       end
 
       it "should not count non-available courses" do
@@ -57,12 +57,12 @@ describe Reporting::CountsReport do
         @course2 = course_model(:account => @account1)
         @course2.destroy
 
-        @course1.workflow_state.should == 'claimed'
-        @course2.workflow_state.should == 'deleted'
+        expect(@course1.workflow_state).to eq 'claimed'
+        expect(@course2.workflow_state).to eq 'deleted'
 
         Reporting::CountsReport.process
         @snapshot = @account1.report_snapshots.detailed.first
-        @snapshot.data['courses'].should == 0
+        expect(@snapshot.data['courses']).to eq 0
       end
     end
 
@@ -70,7 +70,7 @@ describe Reporting::CountsReport do
       it "should count users that recently logged in" do
         Reporting::CountsReport.process
         @snapshot = @account1.report_snapshots.detailed.first
-        @snapshot.data[datum].should == 1
+        expect(@snapshot.data[datum]).to eq 1
       end
 
       it "should not count users whose enrollment is deleted" do
@@ -78,7 +78,7 @@ describe Reporting::CountsReport do
 
         Reporting::CountsReport.process
         @snapshot = @account1.report_snapshots.detailed.first
-        @snapshot.data[datum].should == 0
+        expect(@snapshot.data[datum]).to eq 0
       end
 
       it "should not count users whose pseudonym is deleted" do
@@ -86,7 +86,7 @@ describe Reporting::CountsReport do
 
         Reporting::CountsReport.process
         @snapshot = @account1.report_snapshots.detailed.first
-        @snapshot.data[datum].should == 0
+        expect(@snapshot.data[datum]).to eq 0
       end
 
       it "should not count users who haven't recently logged in" do
@@ -96,7 +96,7 @@ describe Reporting::CountsReport do
 
         Reporting::CountsReport.process
         @snapshot = @account1.report_snapshots.detailed.first
-        @snapshot.data[datum].should == 0
+        expect(@snapshot.data[datum]).to eq 0
       end
     end
 
@@ -108,7 +108,7 @@ describe Reporting::CountsReport do
       end
 
       let(:datum) { 'teachers' }
-      it_should_behave_like "user_counts"
+      include_examples "user_counts"
     end
 
     describe "students" do
@@ -119,7 +119,7 @@ describe Reporting::CountsReport do
       end
 
       let(:datum) { 'students' }
-      it_should_behave_like "user_counts"
+      include_examples "user_counts"
     end
 
     describe "users" do
@@ -130,12 +130,12 @@ describe Reporting::CountsReport do
       end
 
       let(:datum) { 'users' }
-      it_should_behave_like "user_counts"
+      include_examples "user_counts"
 
       it "should include tas" do
         Reporting::CountsReport.process
         @snapshot = @account1.report_snapshots.detailed.first
-        @snapshot.data[datum].should == 1
+        expect(@snapshot.data[datum]).to eq 1
       end
 
       it "should include teachers" do
@@ -145,7 +145,7 @@ describe Reporting::CountsReport do
 
         Reporting::CountsReport.process
         @snapshot = @account1.report_snapshots.detailed.first
-        @snapshot.data[datum].should == 2
+        expect(@snapshot.data[datum]).to eq 2
       end
 
       it "should include students" do
@@ -155,7 +155,7 @@ describe Reporting::CountsReport do
 
         Reporting::CountsReport.process
         @snapshot = @account1.report_snapshots.detailed.first
-        @snapshot.data[datum].should == 2
+        expect(@snapshot.data[datum]).to eq 2
       end
 
       it "should include designers" do
@@ -165,7 +165,7 @@ describe Reporting::CountsReport do
 
         Reporting::CountsReport.process
         @snapshot = @account1.report_snapshots.detailed.first
-        @snapshot.data[datum].should == 2
+        expect(@snapshot.data[datum]).to eq 2
       end
 
       it "should include observers" do
@@ -175,7 +175,7 @@ describe Reporting::CountsReport do
 
         Reporting::CountsReport.process
         @snapshot = @account1.report_snapshots.detailed.first
-        @snapshot.data[datum].should == 2
+        expect(@snapshot.data[datum]).to eq 2
       end
 
       it "should not include student view users" do
@@ -185,7 +185,39 @@ describe Reporting::CountsReport do
 
         Reporting::CountsReport.process
         @snapshot = @account1.report_snapshots.detailed.first
-        @snapshot.data[datum].should == 1
+        expect(@snapshot.data[datum]).to eq 1
+      end
+    end
+
+    describe "files" do
+      before :each do
+        # the account needs a course in it to get data out of the report
+        course(account: @account1, active_course: 1)
+      end
+
+      it "should count files with the account's local id in the namespace" do
+        attachment_model(namespace: "account_#{@account1.local_id}", size: 5 * 1024)
+        Reporting::CountsReport.process
+        @snapshot = @account1.report_snapshots.detailed.first
+        expect(@snapshot.data['files']).to eq 1
+        expect(@snapshot.data['files_size']).to eq 5 * 1024
+      end
+
+      it "should count files with the account's global id in the namespace" do
+        attachment_model(namespace: "account_#{@account1.global_id}", size: 3 * 1024)
+        Reporting::CountsReport.process
+        @snapshot = @account1.report_snapshots.detailed.first
+        expect(@snapshot.data['files']).to eq 1
+        expect(@snapshot.data['files_size']).to eq 3 * 1024
+      end
+
+      it "should count with a heterogenous mixture of file namespaces" do
+        attachment_model(namespace: "account_#{@account1.local_id}", size: 5 * 1024)
+        attachment_model(namespace: "account_#{@account1.global_id}", size: 3 * 1024)
+        Reporting::CountsReport.process
+        @snapshot = @account1.report_snapshots.detailed.first
+        expect(@snapshot.data['files']).to eq 2
+        expect(@snapshot.data['files_size']).to eq 8 * 1024
       end
     end
   end

@@ -24,22 +24,29 @@ require [
   'compiled/views/assignments/AssignmentSettingsView'
   'compiled/views/assignments/AssignmentGroupWeightsView'
   'compiled/views/assignments/ToggleShowByView'
+  'underscore'
 ], (AssignmentGroupCollection, Course, AssignmentGroupListView,
   CreateGroupView, IndexView, AssignmentSettingsView,
-  AssignmentGroupWeightsView, ToggleShowByView) ->
+  AssignmentGroupWeightsView, ToggleShowByView, _) ->
 
   course = new Course
   course.url = ENV.URLS.course_url
   course.fetch()
 
-  includes = ["assignments"]
-  includes.push("all_dates") if ENV.PERMISSIONS.manage
+  includes = ["assignments", "discussion_topic"]
+  if ENV.PERMISSIONS.manage
+    includes.push "all_dates"
+    includes.push "module_ids"
+  # observers
+  else if ENV.current_user_has_been_observer_in_this_course
+    includes.push "all_dates"
 
   assignmentGroups = new AssignmentGroupCollection [],
     course: course
     params:
       include: includes
       override_assignment_dates: !ENV.PERMISSIONS.manage
+    courseSubmissionsURL: ENV.URLS.course_student_submissions_url
 
   assignmentGroupsView = new AssignmentGroupListView
     collection: assignmentGroups
@@ -50,6 +57,10 @@ require [
   assignmentSettingsView = false
   createGroupView = false
   showByView = false
+  indexEl = if window.location.href.indexOf('assignments') == -1
+    '#course_home_content'
+  else
+    "#content"
 
   if ENV.PERMISSIONS.manage
     assignmentSettingsView = new AssignmentSettingsView
@@ -65,14 +76,20 @@ require [
       course: course
       assignmentGroups: assignmentGroups
 
-  @app = new IndexView
+
+  app = new IndexView
+    el: indexEl
     assignmentGroupsView: assignmentGroupsView
     assignmentSettingsView: assignmentSettingsView
     createGroupView: createGroupView
     showByView: showByView
     collection: assignmentGroups
 
-  @app.render()
+  app.render()
 
   # kick it all off
-  assignmentGroups.fetch(reset: true)
+  assignmentGroups.fetch(reset: true).then ->
+    if ENV.PERMISSIONS.manage
+      assignmentGroups.loadModuleNames()
+    else
+      assignmentGroups.getGrades()

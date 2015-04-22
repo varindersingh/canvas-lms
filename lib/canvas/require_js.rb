@@ -1,7 +1,9 @@
 require 'lib/canvas/require_js/plugin_extension'
+require 'lib/canvas/require_js/client_app_extension'
 module Canvas
   module RequireJs
     class << self
+      @@matcher = nil
       def get_binding
         binding
       end
@@ -9,8 +11,12 @@ module Canvas
       PATH_REGEX = %r{.*?/javascripts/(plugins/)?(.*)\.js\z}
       JS_ROOT = "#{Rails.root}/public/javascripts"
 
+      def matcher=(value)
+        @@matcher = value
+      end
+
       def matcher
-        ENV['JS_SPEC_MATCHER'] || '**/*Spec.js'
+        @@matcher || ENV['JS_SPEC_MATCHER'] || '**/*Spec.js'
       end
 
       # get all regular canvas (and plugin) bundles
@@ -26,7 +32,7 @@ module Canvas
             end
             hash
           }
-    
+
         # inject any bundle extensions defined in plugins
         extensions_for("*").each do |bundle, extensions|
           if app_bundles["compiled/bundles/#{bundle}"]
@@ -53,14 +59,39 @@ module Canvas
 
       def paths(cache_busting = false)
         @paths ||= {
-          :ember => 'vendor/ember/ember',
           :common => 'compiled/bundles/common',
           :jqueryui => 'vendor/jqueryui',
-          :use => 'vendor/use',
-          :uploadify => '../flash/uploadify/jquery.uploadify-3.1.min'
-        }.update(cache_busting ? cache_busting_paths : {}).update(plugin_paths).update(Canvas::RequireJs::PluginExtension.paths).to_json.gsub(/([,{])/, "\\1\n    ")
+          :uploadify => '../flash/uploadify/jquery.uploadify-3.2.min',
+        }.update(cache_busting ? cache_busting_paths : {}).
+          update(plugin_paths).
+          update(Canvas::RequireJs::PluginExtension.paths).
+          update(Canvas::RequireJs::ClientAppExtension.paths).
+          to_json.
+          gsub(/([,{])/, "\\1\n    ")
       end
-  
+
+      def map
+        @map ||= Canvas::RequireJs::ClientAppExtension.map.to_json
+      end
+
+      def bundles
+        @bundles ||= Canvas::RequireJs::ClientAppExtension.bundles.to_json
+      end
+
+      def packages
+        @packages ||= [
+          {'name' => 'ic-ajax', 'location' => 'bower/ic-ajax/dist/amd'},
+          {'name' => 'ic-styled', 'location' => 'bower/ic-styled'},
+          {'name' => 'ic-menu', 'location' => 'bower/ic-menu'},
+          {'name' => 'ic-tabs', 'location' => 'bower/ic-tabs/dist/amd'},
+          {'name' => 'ic-droppable', 'location' => 'bower/ic-droppable/dist/amd'},
+          {'name' => 'ic-sortable', 'location' => 'bower/ic-sortable/dist/amd'},
+          {'name' => 'ic-modal', 'location' => 'bower/ic-modal/dist/amd'},
+          {'name' => 'ic-lazy-list', 'location' => 'bower/ic-lazy-list'},
+          {'name' => 'ember-qunit', 'location' => 'bower/ember-qunit/dist/amd'},
+        ].to_json
+      end
+
       def plugin_paths
         @plugin_paths ||= begin
           Dir['public/javascripts/plugins/*'].inject({}) { |hash, plugin|
@@ -74,56 +105,68 @@ module Canvas
       def cache_busting_paths
         { 'compiled/tinymce' => 'compiled/tinymce.js?v2' } # hack: increment to purge browser cached bundles after tiny change
       end
-      
+
       def shims
         <<-JS.gsub(%r{\A +|^ {8}}, '')
           {
-            'vendor/backbone': {
-              deps: ['underscore', 'jquery'],
-              attach: function(_, $){
-                return Backbone;
-              }
+            'bower/react-router/dist/react-router': {
+              deps: ['react'],
+              exports: 'ReactRouter'
             },
-        
-            // slick grid shim
-            'vendor/slickgrid/lib/jquery.event.drag-2.0.min': {
-              deps: ['jquery'],
-              attach: '$'
+            'bower/react-modal/dist/react-modal': {
+              deps: ['react']
             },
-            'vendor/slickgrid/slick.core': {
-              deps: ['jquery', 'use!vendor/slickgrid/lib/jquery.event.drag-2.0.min'],
-              attach: 'Slick'
+            'bower/react-tokeninput/dist/react-tokeninput': {
+              deps: ['react'],
             },
-            'vendor/slickgrid/slick.grid': {
-              deps: ['use!vendor/slickgrid/slick.core'],
-              attach: 'Slick'
+            'bower/ember/ember': {
+              deps: ['jquery', 'handlebars'],
+              exports: 'Ember'
             },
-            'vendor/slickgrid/slick.editors': {
-              deps: ['use!vendor/slickgrid/slick.core'],
-              attach: 'Slick'
+            'bower/ember-data/ember-data': {
+              deps: ['ember'],
+              exports: 'DS'
             },
-            'vendor/slickgrid/plugins/slick.rowselectionmodel': {
-              deps: ['use!vendor/slickgrid/slick.core'],
-              attach: 'Slick'
+            'bower/handlebars/handlebars.runtime': {
+              exports: 'Handlebars'
             },
-
-            'uploadify' : {
-              deps: ['jquery'],
-              attach: '$'
-            },
-
             'vendor/FileAPI/FileAPI.min': {
               deps: ['jquery', 'vendor/FileAPI/config'],
-              attach: 'FileAPI'
+              exports: 'FileAPI'
             },
-
-            'vendor/bootstrap/bootstrap-dropdown' : {
+            'uploadify': {
               deps: ['jquery'],
-              attach: '$'
+              exports: '$'
             },
             'vendor/bootstrap-select/bootstrap-select' : {
               deps: ['jquery'],
-              attach: '$'
+              exports: '$'
+            },
+            'vendor/jquery.jcrop': {
+              deps: ['jquery'],
+              exports: '$'
+            },
+            'vendor/jquery.smartbanner': {
+              deps: ['jquery'],
+              exports: '$'
+            },
+            'handlebars': {
+              deps: ['bower/handlebars/handlebars.runtime.amd'],
+              exports: 'Handlebars'
+            },
+            'vendor/i18n': {
+              exports: 'I18n'
+            },
+            'vendor/react-infinite-scroll.min' : {
+              deps: ['react'],
+              exports: 'InfiniteScroll'
+            },
+            'bower/tinymce/tinymce' : {
+              exports: 'tinymce'
+            },
+            'bower/tinymce/themes/modern/theme' : {
+              deps: ['bower/tinymce/tinymce'],
+              exports: 'tinymce'
             }
           }
         JS

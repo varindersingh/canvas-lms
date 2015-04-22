@@ -19,6 +19,8 @@
 require File.expand_path(File.dirname(__FILE__) + '/../spec_helper')
 require File.expand_path(File.dirname(__FILE__) + '/../cassandra_spec_helper')
 
+require 'csv'
+
 describe PageViewsController do
 
   # Factory-like thing for page views.
@@ -41,36 +43,40 @@ describe PageViewsController do
   end
 
   shared_examples_for "GET 'index' as csv" do
-    before do
-      user_session(account_admin_user)
+    before :once do
+      account_admin_user
+    end
+
+    before :each do
       student_in_course
+      user_session(@admin)
     end
 
     it "should succeed" do
       page_view(@user, '/somewhere/in/app', :created_at => 2.days.ago)
       get 'index', :user_id => @user.id, :format => 'csv'
-      response.should be_success
+      expect(response).to be_success
     end
     it "should order rows by created_at in DESC order" do
       pv2 = page_view(@user, '/somewhere/in/app', :created_at => 2.days.ago)    # 2nd day
       pv1 = page_view(@user, '/somewhere/in/app/1', :created_at => 1.day.ago)  # 1st day
       pv3 = page_view(@user, '/somewhere/in/app/2', :created_at => 3.days.ago)  # 3rd day
       get 'index', :user_id => @user.id, :format => 'csv'
-      response.should be_success
+      expect(response).to be_success
       dates = CSV.parse(response.body, :headers => true).map { |row| row['created_at'] }
-      dates.should == [pv1, pv2, pv3].map(&:created_at).map(&:to_s)
+      expect(dates).to eq [pv1, pv2, pv3].map(&:created_at).map(&:to_s)
     end
   end
 
   context "with db page views" do
-    before :each do
+    before :once do
       Setting.set('enable_page_views', true)
     end
-    it_should_behave_like "GET 'index' as csv"
+    include_examples "GET 'index' as csv"
   end
 
   context "with cassandra page views" do
-    it_should_behave_like 'cassandra page views'
-    it_should_behave_like "GET 'index' as csv"
+    include_examples 'cassandra page views'
+    include_examples "GET 'index' as csv"
   end
 end

@@ -30,11 +30,7 @@ class ErrorReport < ActiveRecord::Base
   # Define a custom callback for external notification of an error report.
   define_callbacks :on_send_to_external
   # Setup callback to default behavior.
-  if Rails.version >= "3.0"
-    set_callback :on_send_to_external, :send_via_email_or_post
-  else
-    on_send_to_external :send_via_email_or_post
-  end
+  set_callback :on_send_to_external, :send_via_email_or_post
 
   attr_accessible
 
@@ -48,14 +44,20 @@ class ErrorReport < ActiveRecord::Base
 
     attr_reader :opts, :exception
 
+    def self.hostname
+      @cached_hostname ||= Socket.gethostname
+    end
+
     def log_error(category, opts)
-      opts[:category] = category.to_s
+      opts[:category] = category.to_s.presence || 'default'
       @opts = opts
       # sanitize invalid encodings
-      @opts[:message] = TextHelper.strip_invalid_utf8(@opts[:message]) if @opts[:message]
-      @opts[:exception_message] = TextHelper.strip_invalid_utf8(@opts[:exception_message]) if @opts[:exception_message]
-      Canvas::Statsd.increment("errors.all")
-      Canvas::Statsd.increment("errors.#{category}")
+      @opts[:message] = Utf8Cleaner.strip_invalid_utf8(@opts[:message]) if @opts[:message]
+      if @opts[:exception_message]
+        @opts[:exception_message] = Utf8Cleaner.strip_invalid_utf8(@opts[:exception_message])
+      end
+      @opts[:hostname] = self.class.hostname
+      @opts[:pid] = Process.pid
       run_callbacks :on_log_error
       create_error_report(opts)
     end
@@ -99,6 +101,32 @@ class ErrorReport < ActiveRecord::Base
     Reporter.new.log_exception(category, exception, opts)
   end
 
+  def self.log_captured(type, exception, error_report_info)
+    if exception.is_a?(String) || exception.is_a?(Symbol)
+      log_error(exception, error_report_info)
+    else
+      type = exception.class.name if type == :default
+      log_exception(type, exception, error_report_info)
+    end
+  end
+
+  def self.log_exception_from_canvas_errors(exception, data)
+    tags = data.fetch(:tags, {})
+    account_id = tags[:account_id]
+    domain_root_account = account_id ? Account.where(id: account_id).first : nil
+    error_report_info = tags.merge(data[:extra])
+    type = tags.fetch(:type, :default)
+
+    if domain_root_account
+      domain_root_account.shard.activate do
+        ErrorReport.log_captured(type, exception, error_report_info)
+      end
+    else
+      ErrorReport.log_captured(type, exception, error_report_info)
+    end
+  end
+
+
   # assigns data attributes to the column if there's a column with that name,
   # otherwise goes into the general data hash
   def assign_data(data = {})
@@ -107,7 +135,9 @@ class ErrorReport < ActiveRecord::Base
       if respond_to?(:"#{k}=")
         self.send(:"#{k}=", v)
       else
-        self.data[k.to_s] = v
+        # dup'ing because some strings come in from Rack as frozen sometimes,
+        # depending on the web server, and our invalid utf-8 stripping breaks on that
+        self.data[k.to_s] = v.is_a?(String) ? v.dup : v
       end
     end
   end
@@ -131,7 +161,7 @@ class ErrorReport < ActiveRecord::Base
   def url=(val)
     write_attribute(:url, LoggingFilter.filter_uri(val))
   end
-  
+
   def guess_email
     self.email = nil if self.email && self.email.empty?
     self.email ||= self.user.email rescue nil
@@ -147,33 +177,6 @@ class ErrorReport < ActiveRecord::Base
   # returns the number of destroyed error reports
   def self.destroy_error_reports(before_date)
     self.where("created_at<?", before_date).delete_all
-  end
-
-  USEFUL_ENV = [
-    "HTTP_ACCEPT",
-    "HTTP_ACCEPT_ENCODING",
-    "HTTP_HOST",
-    "HTTP_REFERER",
-    "HTTP_USER_AGENT",
-    "PATH_INFO",
-    "QUERY_STRING",
-    "REMOTE_HOST",
-    "REQUEST_METHOD",
-    "REQUEST_PATH",
-    "REQUEST_URI",
-    "SERVER_NAME",
-    "SERVER_PORT",
-    "SERVER_PROTOCOL",
-  ]
-  def self.useful_http_env_stuff_from_request(request)
-    stuff = request.env.slice(*USEFUL_ENV)
-    stuff['REMOTE_ADDR'] = request.remote_ip # ActionController::Request#remote_ip has proxy smarts
-    stuff['QUERY_STRING'] = LoggingFilter.filter_query_string("?" + stuff['QUERY_STRING'])
-    stuff['REQUEST_URI'] = LoggingFilter.filter_uri(stuff['REQUEST_URI'])
-    stuff['path_parameters'] = LoggingFilter.filter_params(request.path_parameters.dup).inspect # params rails picks up from the url
-    stuff['query_parameters'] = LoggingFilter.filter_params(request.query_parameters.dup).inspect # params rails picks up from the query string
-    stuff['request_parameters'] = LoggingFilter.filter_params(request.request_parameters.dup).inspect # params from forms
-    stuff
   end
 
   def self.categories

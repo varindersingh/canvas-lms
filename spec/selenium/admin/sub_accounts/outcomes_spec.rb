@@ -1,8 +1,8 @@
 require File.expand_path(File.dirname(__FILE__) + '/../../common')
 require File.expand_path(File.dirname(__FILE__) + '/../../helpers/outcome_common')
 
-describe "sub account outcomes" do
-  it_should_behave_like "in-process server selenium tests"
+describe "sub account outcomes", priority: 2 do
+  include_examples "in-process server selenium tests"
 
     describe "account outcome specs" do
       let(:account) { Account.create(:name => 'sub account from default account', :parent_account => Account.default) }
@@ -34,6 +34,18 @@ describe "sub account outcomes" do
         it "should validate mastery points" do
           should_validate_mastery_points
         end
+
+        it "should_validate_calculation_method_dropdown", test_id: 162376 do
+          should_validate_calculation_method_dropdown
+        end
+
+        it "should validate decaying average", test_id: 162377 do
+          should_validate_decaying_average
+        end
+
+        it "should validate n mastery", test_id: 162378 do
+          should_validate_n_mastery
+        end
       end
 
       context "create/edit/delete outcome groups" do
@@ -63,10 +75,10 @@ describe "sub account outcomes" do
           f('.find_outcome').click
           wait_for_ajaximations
           groups = ff('.outcome-group')
-          groups.size.should == 2
+          expect(groups.size).to eq 2
           groups.each do |g|
             g.click
-            f('.ui-dialog-buttonpane .btn-primary').should_not be_displayed
+            expect(f('.ui-dialog-buttonpane .btn-primary')).not_to be_displayed
           end
         end
       end

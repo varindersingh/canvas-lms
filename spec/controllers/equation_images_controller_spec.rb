@@ -4,7 +4,7 @@ describe EquationImagesController do
 
   it 'should redirect image requests to codecogs' do
     get 'show', :id => 'foo'
-    response.redirected_to.should == 'http://latex.codecogs.com/gif.latex?foo'
+    expect(response).to redirect_to('http://latex.codecogs.com/gif.latex?foo')
   end
 
 end

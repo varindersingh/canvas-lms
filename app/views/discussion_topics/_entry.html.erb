@@ -10,7 +10,8 @@
   skip_sub_entries ||= false
   read_state = entry ? entry.read_state(@current_user) : "read"
   link_to_headless ||= false
-  headless_param = {:headless => 1} if link_to_headless
+  headless_param = {:headless => 1, :hide_student_names => hide_student_names, :student_id => user_id} if link_to_headless
+  hide_student_names = hide_student_names
  %>
 <% cache([
     'entry_message_render_2_',
@@ -30,7 +31,11 @@
       <div class="header_title">
         <% if out_of_context %>
           <span style="font-size: 0.8em; padding-left: 20px;">from
-            <a href="<%= context_url(entry_context, :context_discussion_topic_url, (entry ? entry.discussion_topic_id : '{{ topic_id }}'), headless_param) %>" style="font-size: 1.2em; font-weight: bold;"><%= entry.discussion_topic.title %></a>
+            <% if assignment_visible_to_user %>
+              <a href="<%= context_url(entry_context, :context_discussion_topic_url, (entry ? entry.discussion_topic_id : '{{ topic_id }}'), headless_param) %>" style="font-size: 1.2em; font-weight: bold;"><%= entry.discussion_topic.title %></a>
+            <% else %>
+              <b> <%= entry.discussion_topic.title %> </b>
+            <% end %>
           </span>
         <% else %>
           <% if @topic_agglomerated && entry %>
@@ -51,20 +56,23 @@
         </span>
       </div>
       <% end %>
-      <div class="post_date time_ago_date"><%= entry.try_rescue(:created_at).tap{|time| time && datetime_string(time)} %></div>
+      <div class="post_date time_ago_date" data-timestamp="<%= entry.try_rescue(:created_at).try_rescue(:iso8601) %>"><%= datetime_string(entry.try_rescue(:created_at)) || nbsp %></div>
       <div class="clear"></div>
     <% end %>
   </div>
   <div class="content">
-    <div style="float: left; margin: 0 5px 0 -10px;"><%= avatar((entry.try_rescue(:user_id)), entry_context.asset_string) %></div>
+    <% unless hide_student_names %>
+      <div style="float: left; margin: 0 5px 0 -10px;"><%= avatar((entry.try_rescue(:user_id)), context_code: entry_context.asset_string) %></div>
+    <% end %>
     <div class="course_id" style="display: none;"><%= entry_context.id if entry_context && entry_context.is_a?(Course) %></div>
     <div class="message user_content"><%= user_content(entry.try_rescue(:message)) || nbsp %></div>
     <textarea class="message_html" style="display: none;"><%= h(entry.try_rescue(:message)) %></textarea>
     <div class="link_box">
-      <div class="attachment_data" style="<%= hidden unless entry && entry.attachment %>; float: left;">
-        <%= before_label :attached_file, "Attached File" %> <a href="<%= context_url(entry_context, :context_file_download_url, entry && entry.attachment ? entry.attachment_id : "{{ attachment_id }}") %>" class="attachment_name"><%= entry.try_rescue(:attachment).try_rescue(:display_name) || nbsp %></a>
-        <a href="<%= context_url(entry_context, :context_file_download_url, "{{ attachment_id }}") %>" class="entry_attachment_url" style="display: none;">&nbsp;</a>
-      </div>
+      <% if entry && entry.attachment %>
+        <div class="attachment_data" style="float: left;">
+          <%= before_label :attached_file, "Attached File" %> <a href="<%= file_download_url(entry.attachment, :verifier => entry.attachment.uuid) %>" class="attachment_name"><%= entry.attachment.try_rescue(:display_name) || nbsp %></a>
+        </div>
+      <% end %>
       <div class="clear"></div>
     </div>
     <div class="subcontent" style="<%= hidden if entry && entry.new_record? %>">

@@ -1,19 +1,25 @@
 define [
   'compiled/views/groups/manage/PopoverMenuView'
+  'compiled/models/GroupUser'
   'jst/groups/manage/assignToGroupMenu'
+  'jquery'
   'underscore'
   'compiled/jquery/outerclick'
-], (PopoverMenuView, template, _) ->
+], (PopoverMenuView, GroupUser, template, $, _) ->
 
   class AssignToGroupMenu extends PopoverMenuView
+
+    defaults: _.extend {},
+      PopoverMenuView::defaults,
+      zIndex: 10
 
     events: _.extend {},
       PopoverMenuView::events,
       'click .set-group': 'setGroup'
+      'focusin .focus-bound': "boundFocused"
 
     attach: ->
       @collection.on 'change add remove reset', @render
-      @render()
 
     tagName: 'div'
 
@@ -24,8 +30,27 @@ define [
     setGroup: (e) ->
       e.preventDefault()
       e.stopPropagation()
-      @model.save 'groupId', $(e.currentTarget).data('group-id')
+      newGroupId = $(e.currentTarget).data('group-id')
+      @collection.category.reassignUser(@model, @collection.get(newGroupId))
       @hide()
 
     toJSON: ->
-      groups: @collection.toJSON()
+      hasGroups = @collection.length > 0
+      {
+        groups: @collection.toJSON()
+        noGroups: !hasGroups
+        allFull: hasGroups and @collection.models.every (g) -> g.isFull()
+      }
+
+    attachElement: ->
+      $('body').append(@$el)
+
+    focus: ->
+      noGroupsToJoin = @collection.length <= 0 or @collection.models.every (g) -> g.isFull()
+      toFocus = if noGroupsToJoin then ".popover-content p" else "li a" #focus text if no groups, focus first group if groups
+      @$el.find(toFocus).first().focus()
+
+    boundFocused: ->
+      #force hide and pretend we pressed escape
+      @$el.detach()
+      @trigger("close", {"escapePressed": true })

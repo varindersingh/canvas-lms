@@ -19,21 +19,27 @@
 require File.expand_path(File.dirname(__FILE__) + '/../spec_helper')
 
 describe 'CrocodocDocument' do
-  before do
+  before :once do
     Setting.set 'crocodoc_counter', 0
     PluginSetting.create! :name => 'crocodoc',
                           :settings => { :api_key => "blahblahblahblahblah" }
+  end
+
+  before :each do
     Crocodoc::API.any_instance.stubs(:upload).returns 'uuid' => '1234567890'
   end
 
   context 'permissions_for_user' do
-    before do
+    before :once do
       teacher_in_course(:active_all => true)
       student_in_course
       @submitter = @student
       student_in_course
       @other_student = @student
       submission_model :course => @course, :user => @submitter
+    end
+
+    before :each do
       attachment = attachment_model(:context => @submitter)
       attachment.associate_with(@submission)
       attachment.save!
@@ -41,46 +47,46 @@ describe 'CrocodocDocument' do
     end
 
     it "should let the teacher view all annotations" do
-      @crocodoc.permissions_for_user(@teacher).should == {
+      expect(@crocodoc.permissions_for_user(@teacher)).to eq({
         :filter => 'all',
         :admin => true,
         :editable => true,
-      }
+      })
     end
 
     context "submitter permissions" do
       it "should see everything (unless the assignment is muted)" do
-        @crocodoc.permissions_for_user(@submitter).should == {
+        expect(@crocodoc.permissions_for_user(@submitter)).to eq({
           :filter => 'all',
           :admin => false,
           :editable => true,
-        }
+        })
       end
 
       it "should only see their own annotations when assignment is muted" do
         @assignment.mute!
-        @crocodoc.permissions_for_user(@submitter).should == {
+        expect(@crocodoc.permissions_for_user(@submitter)).to eq({
           :filter => @submitter.crocodoc_id,
           :admin => false,
           :editable => true,
-        }
+        })
       end
     end
 
     it "should only allow classmates to see their own annotations" do
-      @crocodoc.permissions_for_user(@other_student).should == {
+      expect(@crocodoc.permissions_for_user(@other_student)).to eq({
         :filter => @other_student.crocodoc_id!,
         :admin => false,
         :editable => true,
-      }
+      })
     end
 
     it "should not allow annotations if no user is given" do
-      @crocodoc.permissions_for_user(nil).should == {
+      expect(@crocodoc.permissions_for_user(nil)).to eq({
         :filter => 'none',
         :admin => false,
         :editable => false,
-      }
+      })
     end
   end
 

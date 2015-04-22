@@ -1,10 +1,14 @@
-define ['i18n!titles', 'jquery', 'Backbone', 'jst/googleDocsTreeView'], (I18n, $, Backbone, template)->
+define [
+  'i18n!titles'
+  'jquery'
+  'Backbone'
+  'jst/googleDocsTreeView'
+  'jquery.inst_tree'
+], (I18n, $, Backbone, template)->
 
   class GoogleDocsTreeView extends Backbone.View
 
     template: template
-
-    initialize: (options)->
 
     events:
       "click li.file": "activateFile",
@@ -29,11 +33,13 @@ define ['i18n!titles', 'jquery', 'Backbone', 'jst/googleDocsTreeView'], (I18n, $
       $target.addClass 'active'
       file_id = $target.attr('id').substring(9)
       @trigger('activate-file', file_id)
+      $("#submit_google_doc_form .btn-primary").focus()
 
     activateFolder: (event)=>
       $target = @$(event.target)
       if $target.closest('.sign').length == 0 && $target.closest('.file,.folder').hasClass('folder')
         @$(event.currentTarget).find(".sign").click()
+        @$(event.currentTarget).find(".file").focus()
 
     tagName: 'ul'
 

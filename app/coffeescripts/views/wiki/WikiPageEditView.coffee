@@ -8,9 +8,10 @@ define [
   'compiled/views/wiki/WikiPageDeleteDialog'
   'compiled/views/wiki/WikiPageReloadView'
   'i18n!pages'
+  'compiled/views/editor/KeyboardShortcuts'
   'compiled/tinymce'
   'tinymce.editor_box'
-], ($, _, Backbone, wikiSidebar, template, ValidatedFormView, WikiPageDeleteDialog, WikiPageReloadView, I18n) ->
+], ($, _, Backbone, wikiSidebar, template, ValidatedFormView, WikiPageDeleteDialog, WikiPageReloadView, I18n, KeyboardShortcuts) ->
 
   class WikiPageEditView extends ValidatedFormView
     @mixin
@@ -18,6 +19,7 @@ define [
         '[name="body"]': '$wikiPageBody'
         '.header-bar-outer-container': '$headerBarOuterContainer'
         '.page-changed-alert': '$pageChangedAlert'
+        '.help_dialog': '$helpDialog'
 
       events:
         'click a.switch_views': 'switchViews'
@@ -69,6 +71,12 @@ define [
         COURSE_ROLES: json.contextName == "courses"
       json
 
+    onUnload: (ev) =>
+      if this && @checkUnsavedOnLeave && @hasUnsavedChanges()
+        warning = @unsavedWarning()
+        (ev || window.event).returnValue = warning
+        return warning
+
     # After the page loads, ensure the that wiki sidebar gets initialized
     # correctly.
     # @api custom backbone override
@@ -79,11 +87,7 @@ define [
 
       @checkUnsavedOnLeave = true
       view = this
-      window.addEventListener 'beforeunload', (ev) ->
-        if view && view.checkUnsavedOnLeave && view.hasUnsavedChanges()
-          warning = view.unsavedWarning()
-          (ev || window.event).returnValue = warning
-          return warning
+      window.addEventListener 'beforeunload', @onUnload
 
       unless @firstRender
         @firstRender = true
@@ -102,6 +106,9 @@ define [
         @render()
       @reloadView.pollForChanges()
 
+      @$helpDialog.html((new KeyboardShortcuts()).render().$el)
+
+
     # Initialize the wiki sidebar
     # @api private
     initWikiSidebar: ->
@@ -117,6 +124,9 @@ define [
     switchViews: (event) ->
       event?.preventDefault()
       @$wikiPageBody.editorBox('toggle')
+      # hide the clicked link, and show the other toggle link.
+      # todo: replace .andSelf with .addBack when JQuery is upgraded.
+      $(event.currentTarget).siblings('a').andSelf().toggle()
 
     # Validate they entered in a title.
     # @api ValidatedFormView override
@@ -134,11 +144,9 @@ define [
       errors
 
     hasUnsavedChanges: ->
-      json = @toJSON()
-      dirty = @$wikiPageBody.editorBox('is_dirty')
-      if json.CAN.EDIT_TITLE
-        dirty ||= (@model.get('title') ? '') != (@getFormData().title ? '')
-
+      dirty = @$wikiPageBody.editorBox('exists?') && @$wikiPageBody.editorBox('is_dirty')
+      if not dirty and @toJSON().CAN.EDIT_TITLE
+        dirty = (@model.get('title') || '') isnt (@getFormData().title || '')
       dirty
 
     unsavedWarning: ->

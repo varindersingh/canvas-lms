@@ -6,7 +6,7 @@ define ['Backbone', 'underscore'], ({Model}, _) ->
       roles: null
       sections: null
       course_section_id: null
-      enrollment_type: null
+      role_id: null
       user_list: null
       readURL: null
       updateURL: null
@@ -14,14 +14,12 @@ define ['Backbone', 'underscore'], ({Model}, _) ->
       enrolledUsers: null
 
     present: ->
-      json = @attributes
-      json.course_section_id = parseInt json.course_section_id, 10
-      json
+      @attributes
 
     toJSON: ->
       attrs = [
         'course_section_id'
-        'enrollment_type'
+        'role_id'
         'user_list'
         'limit_privileges_to_course_section'
       ]

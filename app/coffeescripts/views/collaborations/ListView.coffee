@@ -17,12 +17,13 @@
 #
 
 define [
+  'jquery'
   'underscore'
   'compiled/views/PaginatedView'
   'compiled/collections/UserCollection'
   'compiled/collections/GroupCollection'
   'jst/collaborations/collaborator'
-], ({each, extend, flatten, reject}, PaginatedView, UserCollection, GroupCollection, collaboratorTemplate) ->
+], ($, {each, extend, flatten, reject}, PaginatedView, UserCollection, GroupCollection, collaboratorTemplate) ->
 
   class ListView extends PaginatedView
     # Members to exclude from the collection.
@@ -31,11 +32,11 @@ define [
     events:
       'click a': 'selectCollaborator'
 
-    initialize: ->
-      @collection                = @createCollection(@options.type)
+    initialize: (options = {}) ->
+      @collection                = @createCollection(options.type)
       @paginationScrollContainer = @$el.parents('.list-wrapper')
       @attachEvents()
-      super(fetchOptions: @options.fetchOptions)
+      super
 
     # Internal: Create a collection of the given type.
     #
@@ -46,7 +47,9 @@ define [
       if type is 'user'
         new UserCollection(comparator: (user) -> user.get('sortable_name'))
       else
-        new GroupCollection
+        collection = new GroupCollection()
+        collection.forCourse = true
+        collection
 
     # Internal: Attach events to the collection.
     #
@@ -57,8 +60,8 @@ define [
 
     render: =>
       @updateFilter([])
-      collaborators = @collection.map(@renderCollaborator)
-      @$el.html(collaborators.join(''))
+      collaboratorsHtml = @collection.map(@renderCollaborator).join('')
+      @$el.html(collaboratorsHtml)
       @updateFocus() if @currentIndex? && @hasFocus
       @hasFocus = false
       super

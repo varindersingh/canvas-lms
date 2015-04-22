@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2011 Instructure, Inc.
+# Copyright (C) 2011 - 2015 Instructure, Inc.
 #
 # This file is part of Canvas.
 #
@@ -16,24 +16,48 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
+require 'mail'
+
 class Mailer < ActionMailer::Base
 
   attr_reader :email
 
-  def message(m)
-    recipients m.to
-    bcc m.bcc if m.bcc
-    cc m.cc if m.cc
-    from ("#{m.from_name || HostUrl.outgoing_email_default_name} <" + HostUrl.outgoing_email_address + ">")
-    reply_to ReplyToAddress.new(m).address
-    subject m.subject
-    if m.html_body
-      content_type 'multipart/alternative'
+  # define in rails3-style
+  def create_message(m)
+    # notifications have context, bounce replies don't.
+    headers('Auto-Submitted' => m.context ? 'auto-generated' : 'auto-replied')
 
-      part :content_type => 'text/plain; charset=utf-8', :body => m.body
-      part :content_type => 'text/html; charset=utf-8',  :body => m.html_body
-    else
-      body m.body
+    params = {
+      from: from_mailbox(m),
+      to: m.to,
+      subject: m.subject
+    }
+
+    reply_to = reply_to_mailbox(m)
+    params[:reply_to] = reply_to if reply_to
+
+    mail(params) do |format|
+      format.text{ render text: m.body }
+      format.html{ render text: m.html_body } if m.html_body
     end
+  end
+
+  private
+  def quoted_address(display_name, address)
+    addr = Mail::Address.new(address)
+    addr.display_name = display_name
+    addr.format
+  end
+
+  def from_mailbox(message)
+    quoted_address(message.from_name || HostUrl.outgoing_email_default_name, HostUrl.outgoing_email_address)
+  end
+
+  def reply_to_mailbox(message)
+    address = IncomingMail::ReplyToAddress.new(message).address
+    return address unless message.reply_to_name.present?
+    return nil unless address.present?
+
+    quoted_address(message.reply_to_name, address)
   end
 end

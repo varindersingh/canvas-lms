@@ -19,8 +19,11 @@
 define([
   'i18n!assignments' /* I18n.t */,
   'jquery' /* $ */,
+  'underscore' /* _ */,
   'compiled/views/GoogleDocsTreeView',
   'jst/assignments/homework_submission_tool',
+  'compiled/external_tools/HomeworkSubmissionLtiContainer',
+  'compiled/views/editor/KeyboardShortcuts' /* TinyMCE Keyboard Shortcuts for a11y */,
   'compiled/jquery.rails_flash_notifications',
   'jquery.ajaxJSON' /* ajaxJSON */,
   'jquery.inst_tree' /* instTree */,
@@ -33,13 +36,19 @@ define([
   'tinymce.editor_box' /* editorBox */,
   'vendor/jquery.scrollTo' /* /\.scrollTo/ */,
   'jqueryui/tabs' /* /\.tabs/ */
-], function(I18n, $, GoogleDocsTreeView, homework_submission_tool) {
+], function(I18n, $, _, GoogleDocsTreeView, homework_submission_tool, HomeworkSubmissionLtiContainer, RCEKeyboardShortcuts) {
 
   window.submissionAttachmentIndex = -1;
 
   $(document).ready(function() {
     var submitting = false,
         submissionForm = $('.submit_assignment_form');
+
+    var homeworkSubmissionLtiContainer = new HomeworkSubmissionLtiContainer('#submit_from_external_tool_form');
+
+    // Add the Keyboard shortcuts info button
+    var keyboardShortcutsView = new RCEKeyboardShortcuts();
+    keyboardShortcutsView.render().$el.insertBefore($(".switch_text_entry_submission_views:first"));
 
     // grow and shrink the comments box on focus/blur if the user
     // hasn't entered any content.
@@ -53,11 +62,11 @@ define([
 
     submissionForm.submit(function(event) {
       var $turnitin = $(this).find(".turnitin_pledge");
-      if($("#external_tool_submission_type").val() == "online_url_to_file") { 
+      if($("#external_tool_submission_type").val() == "online_url_to_file") {
         event.preventDefault();
         event.stopPropagation();
         uploadFileFromUrl();
-        return; 
+        return;
       }
       if($turnitin.length > 0 && !$turnitin.attr('checked')) {
         alert(I18n.t('messages.agree_to_pledge', "You must agree to the submission pledge before you can submit this assignment."));
@@ -88,6 +97,28 @@ define([
             .prop('disabled', false);
           return false;
         }
+
+        // If there are restrictions on file type, don't accept submission if the file extension is not allowed
+        if(ENV.SUBMIT_ASSIGNMENT.ALLOWED_EXTENSIONS.length > 0) {
+          var subButton = $(this).find('button[type=submit]');
+          var badExt = false;
+          $.each(uploadedAttachmentIds.split(","), function(index, id) {
+            if (id.length > 0) {
+              var ext = $("#uploaded_files .file_" + id + " .name").text().split('.').pop().toLowerCase();
+              if ($.inArray(ext, ENV.SUBMIT_ASSIGNMENT.ALLOWED_EXTENSIONS) < 0) {
+                badExt = true;
+                $.flashError(I18n.t('#errors.wrong_file_extension', 'The file you selected with extension "%{extension}", is not authorized for submission', {extension: ext}));
+              }
+            }
+          });
+          if(badExt) {
+            subButton
+              .text(I18n.t('#button.submit_assignment', 'Submit Assignment'))
+              .prop('disabled', false);
+            return false;
+          }
+        }
+
         $.ajaxJSONPreparedFiles.call(this, {
           handle_files: function(attachments, data) {
             var ids = (data['submission[attachment_ids]'] || "").split(",");
@@ -106,7 +137,7 @@ define([
           url: $(this).attr('action'),
           success: function(data) {
             submitting = true;
-            window.location = window.location.href.replace(window.location.hash, "");
+            window.location = window.location.href.replace(/\#$/g, "").replace(window.location.hash, "");
           },
           error: function(data) {
             submissionForm.find("button[type='submit']").text(I18n.t('messages.submit_failed', "Submit Failed, please try again"));
@@ -128,7 +159,7 @@ define([
       if(hash && hash.indexOf("#submit") == 0) {
         $(".submit_assignment_link").triggerHandler('click', true);
         if(hash == "#submit_google_doc") {
-          $("#submit_assignment_tabs").tabs('select', "#submit_google_doc_form");
+          $("#submit_assignment_tabs").tabs('select', ".google_doc_form");
         }
       }
     });
@@ -149,13 +180,15 @@ define([
       $("#submit_assignment").show();
       $(".submit_assignment_link").hide();
       $("html,body").scrollTo($("#submit_assignment"));
-      $("#submit_online_text_entry_form textarea:first").editorBox();
-      checkForHomeworkSubmissionTools();
+      createSubmitAssignmentTabs();
+      homeworkSubmissionLtiContainer.loadExternalTools();
     });
 
-    $("#switch_text_entry_submission_views").click(function(event) {
+    $(".switch_text_entry_submission_views").click(function(event) {
       event.preventDefault();
       $("#submit_online_text_entry_form textarea:first").editorBox('toggle');
+      //  todo: replace .andSelf with .addBack when JQuery is upgraded.
+      $(this).siblings(".switch_text_entry_submission_views").andSelf().toggle();
     });
 
     $(".submit_assignment_form .cancel_button").click(function() {
@@ -163,7 +196,29 @@ define([
       $(".submit_assignment_link").show();
     });
 
-    $("#submit_assignment_tabs").tabs();
+    function createSubmitAssignmentTabs() {
+      $("#submit_assignment_tabs").tabs({
+        beforeActivate: function( event, ui ) {
+          // determine if this is an external tool
+          if ($(event.currentTarget).hasClass('external-tool')) {
+            var externalToolId = $(event.currentTarget).data('id');
+            homeworkSubmissionLtiContainer.embedLtiLaunch(externalToolId)
+          }
+        },
+        activate: function(event, ui) {
+          if (ui.newTab.find('a').hasClass('submit_online_text_entry_option')) {
+            $el = $("#submit_online_text_entry_form textarea:first");
+            if (!$el.editorBox('exists?')) { $el.editorBox(); }
+          }
+        },
+        create: function(event, ui) {
+          if (ui.tab.find('a').hasClass('submit_online_text_entry_option')) {
+            $el = $("#submit_online_text_entry_form textarea:first");
+            if (!$el.editorBox('exists?')) { $el.editorBox(); }
+          }
+        }
+      });
+    }
 
     $("#uploaded_files > ul").instTree({
       autoclose: false,
@@ -200,21 +255,70 @@ define([
       toggleRemoveAttachmentLinks();
     });
 
+    function listGoogleDocs(){
+      var url = window.location.pathname + "/list_google_docs";
+      $.get(url,{}, function(data, textStatus){
+
+        var tree = new GoogleDocsTreeView({model: data});
+        $('div#google_docs_container').html(tree.el);
+        tree.render();
+        tree.on('activate-file', function(file_id){
+          $("#submit_google_doc_form").find("input[name='google_doc[document_id]']").val(file_id);
+          var submitButton = $("#submit_google_doc_form").find("[disabled].btn-primary");
+          if(submitButton) {
+            submitButton.removeAttr("disabled")
+          }
+        });
+
+      }, 'json');
+    }
+
     $(".submit_online_url_option").click(function(event) {
       if($(this).attr("href") == '#submit_google_doc_form'){
-        var url = window.location.pathname + "/list_google_docs";
-        $.get(url,{}, function(data, textStatus){
-
-          var tree = new GoogleDocsTreeView({model: data});
-          $('div#google_docs_container').html(tree.el);
-          tree.render();
-          tree.on('activate-file', function(file_id){
-            $("#submit_google_doc_form").find("input[name='google_doc[document_id]']").val(file_id);
-          });
-
-        }, 'json');
+        listGoogleDocs();
       }
     });
+
+    //list Google Docs if Google Docs tab is active
+    if(window.location.hash == "#submit_google_doc_form"){
+      listGoogleDocs();
+    }
+
+    $("#auth-google").live('click', function(e){
+      e.preventDefault();
+      var href = $(this).attr("href");
+      reauth(href);
+    });
+
+    // Post message for anybody to listen to //
+    if (window.opener) {
+      window.opener.postMessage({
+        "type": "event",
+        "payload": "done"
+      }, window.opener.location.toString());
+    }
+
+
+    function reauth(auth_url) {
+      var modal = window.open(auth_url, "Authorize Google Docs", 'menubar=no,directories=no,location=no,height=500,width=500');
+      $(window).on("message", function (event){
+        event = event.originalEvent;
+        if(!event || !event.data || event.origin !== window.location.protocol + "//" + window.location.host) return;
+
+        if(event.data.type == "event" && event.data.payload == "done") {
+          if (modal)
+            modal.close();
+
+          reloadGoogleDrive();
+        }
+      });
+    }
+
+    function reloadGoogleDrive() {
+      $("#submit_google_doc_form.auth").hide();
+      $("#submit_google_doc_form.submit_assignment_form").removeClass('hide');
+      listGoogleDocs();
+    }
 
     function toggleRemoveAttachmentLinks(){
       $('#submit_online_upload_form .remove_attachment_link').showIf($('#submit_online_upload_form .submission_attachment:not(#submission_attachment_blank)').length > 1);
@@ -234,6 +338,11 @@ define([
   });
 
   $("#submit_google_doc_form").submit(function() {
+    // make sure we have a document selected
+    if (!$("#submit_google_doc_form").find("input[name='google_doc[document_id]']").val()){
+      return false
+    }
+
     $("#uploading_google_doc_message").dialog({
       title: I18n.t('titles.uploading', "Uploading Submission"),
       modal: true,
@@ -259,36 +368,9 @@ define([
       });
     });
   });
-  
+
   var $tools = $("#submit_from_external_tool_form");
-  // The "More" tab will only appear for users once the API has
-  // returned at least one valid homework submission tool, so
-  // most users will never see it.
-  // TODO: Change this to add the "More" tab for everyone with
-  // a way to browse/suggest tools if the user has none set up
-  function checkForHomeworkSubmissionTools() {
-    if(!checkForHomeworkSubmissionTools.loading) {
-      checkForHomeworkSubmissionTools.loading = true;
-      var url = $("#external_tools_url").attr('href');
-      $.ajaxJSON(url, 'GET', {}, function(data) {
-        if(!data.length) {
-          $tools.find("ul.tools li").text(I18n.t('no_tools_found', 'No tools found'));
-        } else {
-          $(".submit_from_external_tool_option").parent().show();
-          $tools.find("ul.tools").empty();
-          for(var idx = 0; idx < data.length; idx++) {
-            var tool = data[idx];
-            tool.display_text = tool.homework_submission.label;
-            var html = homework_submission_tool(tool);
-            var $li = $(html).data('tool', tool);
-            $tools.find("ul.tools").append($li);
-          }
-        }
-      }, function() {
-        $tools.find("ul.tools li.none").text(I18n.t('loading_tools_failed', 'Loading tools failed'));
-      });
-    }
-  }
+
   function uploadFileFromUrl() {
     var promise = $.Deferred();
     function checkFileStatus(url, callback, error) {
@@ -325,12 +407,14 @@ define([
   };
   $("#submit_from_external_tool_form .tools li").live('click', function(event) {
     event.preventDefault();
+
     var tool = $(this).data('tool');
-    var url = "/courses/" + $("#identity .course_id").text() + "/external_tools/" + tool.id + "/resource_selection?homework=1&assignment_id=" + ENV.SUBMIT_ASSIGNMENT.ID;
-    var width = tool.homework_submission.selection_width || tool.selection_width;
-    var height = tool.homework_submission.selection_height || tool.selection_height;
-    var title = tool.display_text;
-    var $div = $("<div/>", {id: "homework_selection_dialog"}).appendTo($("body"));
+    var url = "/courses/" + ENV.COURSE_ID + "/external_tools/" + tool.id + "/resource_selection?homework=1&assignment_id=" + ENV.SUBMIT_ASSIGNMENT.ID;
+
+    var width = tool.get('homework_submission').selection_width || tool.get('selection_width');
+    var height = tool.get('homework_submission').selection_height || tool.get('selection_height');
+    var title = tool.get('display_text');
+    var $div = $("<div/>", {id: "homework_selection_dialog", style: "padding: 0; overflow-y: hidden;"}).appendTo($("body"));
     function invalidToolReturn(message) {
       $.flashError(I18n.t("invalid_tool_return", "The launched tool returned an invalid resource for this assignment"));
       console.log(message);

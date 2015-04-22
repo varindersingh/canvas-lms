@@ -16,6 +16,8 @@
 # with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
+require 'csv'
+
 require_dependency 'sis/common'
 
 module SIS
@@ -48,8 +50,8 @@ module SIS
         @sis.add_warning(csv, message)
       end
     
-      def update_progress(count = 1)
-        @sis.update_progress(count)
+      def update_progress
+        @sis.update_progress
       end
     
       def csv_rows(csv)
@@ -59,7 +61,8 @@ module SIS
       end
 
       def importer_opts
-        { :batch_id => @batch.try(:id),
+        { :batch => @batch,
+          :batch_user => @batch.try(:user),
           :logger => @sis.logger,
           :override_sis_stickiness => @sis.override_sis_stickiness,
           :add_sis_stickiness => @sis.add_sis_stickiness,

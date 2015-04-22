@@ -2,12 +2,13 @@ require File.expand_path(File.dirname(__FILE__) + '/../../common')
 require File.expand_path(File.dirname(__FILE__) + '/../../helpers/rubrics_common')
 
 describe "sub account shared rubric specs" do
-  it_should_behave_like "in-process server selenium tests"
+  include_examples "in-process server selenium tests"
   let(:account) { Account.create(:name => 'sub account from default account', :parent_account => Account.default) }
   let(:rubric_url) { "/accounts/#{account.id}/rubrics" }
   let(:who_to_login) { 'admin' }
 
   before (:each) do
+    resize_screen_to_normal
     course_with_admin_logged_in
   end
 
@@ -28,6 +29,7 @@ describe "sub account shared rubric specs" do
   end
 
   it "should round to an integer when splitting" do
+    resize_screen_to_default
     should_round_to_an_integer_when_splitting
   end
 

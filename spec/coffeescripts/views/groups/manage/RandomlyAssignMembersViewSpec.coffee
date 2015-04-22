@@ -1,9 +1,11 @@
 define [
+  'jquery'
+  'underscore'
   'compiled/views/groups/manage/GroupCategoryView'
   'compiled/views/groups/manage/RandomlyAssignMembersView'
   'compiled/models/GroupCategory'
-  #'manage_groups'
-], (GroupCategoryView, RandomlyAssignMembersView, GroupCategory) ->
+  'helpers/fakeENV'
+], ($, _, GroupCategoryView, RandomlyAssignMembersView, GroupCategory) ->
 
   server = null
   view = null
@@ -15,7 +17,7 @@ define [
       'Content-Type': 'application/json'
     }, JSON.stringify(json)]
 
-  groupsResponse =   # GET "/api/v1/group_categories/20/groups?per_page=50"
+  groupsResponse =   # GET "/api/v1/group_categories/20/groups?per_page=50&include[]=sections"
     [
       {
         "description": null,
@@ -28,7 +30,6 @@ define [
         "storage_quota_mb": 50,
         "context_type": "Course",
         "course_id": 1,
-        "followed_by_user": false,
         "avatar_url": null,
         "role": null
       },
@@ -43,7 +44,6 @@ define [
         "storage_quota_mb": 50,
         "context_type": "Course",
         "course_id": 1,
-        "followed_by_user": false,
         "avatar_url": null,
         "role": null
       },
@@ -58,7 +58,6 @@ define [
         "storage_quota_mb": 50,
         "context_type": "Course",
         "course_id": 1,
-        "followed_by_user": false,
         "avatar_url": null,
         "role": null
       }
@@ -147,11 +146,11 @@ define [
       #   and one GET request for "/api/v1/group_categories/20/users?unassigned=true&per_page=50"
       server.respondWith("GET", "/api/v1/group_categories/20/groups?per_page=50",
         [200, { "Content-Type": "application/json" }, JSON.stringify(groupsResponse)])
-      server.respondWith("GET", "/api/v1/group_categories/20/users?unassigned=true&per_page=50",
+      server.respondWith("GET", "/api/v1/group_categories/20/users?per_page=50&include[]=sections&exclude[]=pseudonym&unassigned=true",
         [200, { "Content-Type": "application/json" }, JSON.stringify(unassignedUsersResponse)])
 
       view.render()
-      view.$el.appendTo($(document.body))
+      view.$el.appendTo($("#fixtures"))
 
       server.respond()
       server.responses = []
@@ -160,6 +159,7 @@ define [
       server.restore()
       globalObj.ENV = @_ENV
       view.remove()
+      document.getElementById("fixtures").innerHTML = ""
 
   test 'randomly assigns unassigned users', ->
     $progressContainer = $('.progress-container')
@@ -200,10 +200,10 @@ define [
 
     ##
     # the 100% completion response will cascade a model.fetch request + model.groups().fetch + model.unassignedUsers().fetch calls
-    sendResponse("GET", "/api/v1/group_categories/20", groupCategoryResponse)
+    sendResponse("GET", "/api/v1/group_categories/20?includes[]=unassigned_users_count&includes[]=groups_count", JSON.stringify(_.extend({}, groupCategoryResponse, {groups_count: 1, unassigned_users_count: 0})))
     server.respondWith("GET", "/api/v1/group_categories/20/groups?per_page=50",
       [200, { "Content-Type": "application/json" }, JSON.stringify(groupsResponse)])
-    server.respondWith("GET", "/api/v1/group_categories/20/users?unassigned=true&per_page=50",
+    server.respondWith("GET", "/api/v1/group_categories/20/users?per_page=50&include[]=sections&exclude[]=pseudonym&unassigned=true",
       [200, { "Content-Type": "application/json" }, JSON.stringify([])])
     server.respond()
 

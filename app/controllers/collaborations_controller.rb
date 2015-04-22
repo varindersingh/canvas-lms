@@ -19,50 +19,81 @@
 # @API Collaborations
 # API for accessing course and group collaboration information.
 #
-# @object Collaborator
-#   {
-#     // The unique user or group identifier for the collaborator.
-#     "id": 12345,
+# @model Collaborator
+#     {
+#       "id": "Collaborator",
+#       "description": "",
+#       "required": ["id"],
+#       "properties": {
+#         "id": {
+#           "description": "The unique user or group identifier for the collaborator.",
+#           "example": 12345,
+#           "type": "integer"
+#         },
+#         "type": {
+#           "description": "The type of collaborator (e.g. 'user' or 'group').",
+#           "example": "user",
+#           "type": "string",
+#           "allowableValues": {
+#             "values": [
+#               "user",
+#               "group"
+#             ]
+#           }
+#         },
+#         "name": {
+#           "description": "The name of the collaborator.",
+#           "example": "Don Draper",
+#           "type": "string"
+#         }
+#       }
+#     }
 #
-#     // The type of collaborator (e.g. "user" or "group").
-#     "type": "user",
-#
-#     // The name of the collaborator.
-#     "name": "Don Draper"
-#   }
-
 class CollaborationsController < ApplicationController
   before_filter :require_context, :except => [:members]
   before_filter :require_collaboration_and_context, :only => [:members]
   before_filter :require_collaborations_configured
   before_filter :reject_student_view_student
 
+  before_filter { |c| c.active_tab = "collaborations" }
+
   include Api::V1::Collaborator
-  include GoogleDocs
 
   def index
     return unless authorized_action(@context, @current_user, :read) &&
       tab_enabled?(@context.class::TAB_COLLABORATIONS)
 
+    add_crumb(t('#crumbs.collaborations', "Collaborations"), polymorphic_path([@context, :collaborations]))
+
     @collaborations = @context.collaborations.active
     log_asset_access("collaborations:#{@context.asset_string}", "collaborations", "other")
-    @google_docs = google_docs_verify_access_token rescue false
-    js_env :TITLE_MAX_LEN => Collaboration::TITLE_MAX_LENGTH
+    @google_drive_upgrade = logged_in_user && Canvas::Plugin.find(:google_drive).try(:settings) &&
+      (!logged_in_user.user_services.where(service: 'google_drive').first || !(google_drive_connection.verify_access_token rescue false))
+
+    @google_docs_authorized = !@google_drive_upgrade && google_service_connection.verify_access_token rescue false
+
+    js_env :TITLE_MAX_LEN => Collaboration::TITLE_MAX_LENGTH,
+           :CAN_MANAGE_GROUPS => @context.grants_right?(@current_user, session, :manage_groups),
+           :collaboration_types => Collaboration.collaboration_types
   end
 
   def show
     @collaboration = @context.collaborations.find(params[:id])
     if authorized_action(@collaboration, @current_user, :read)
       @collaboration.touch
-      if @collaboration.valid_user?(@current_user)
-        @collaboration.authorize_user(@current_user)
-        log_asset_access(@collaboration, "collaborations", "other", 'participate')
-        redirect_to @collaboration.url
-      elsif @collaboration.is_a?(GoogleDocsCollaboration)
-        redirect_to oauth_url(:service => :google_docs, :return_to => request.url)
-      else
-        flash[:error] = t 'errors.cannot_load_collaboration', "Cannot load collaboration"
-        redirect_to named_context_url(@context, :context_collaborations_url)
+      begin
+        if @collaboration.valid_user?(@current_user)
+          @collaboration.authorize_user(@current_user)
+          log_asset_access(@collaboration, "collaborations", "other", 'participate')
+          redirect_to @collaboration.url
+        elsif @collaboration.is_a?(GoogleDocsCollaboration)
+          redirect_to oauth_url(:service => :google_docs, :return_to => request.url)
+        else
+          flash[:error] = t 'errors.cannot_load_collaboration', "Cannot load collaboration"
+          redirect_to named_context_url(@context, :context_collaborations_url)
+        end
+      rescue GoogleDocs::DriveConnectionException => drive_exception
+        Canvas::Errors.capture(drive_exception)
       end
     end
   end
@@ -112,7 +143,7 @@ class CollaborationsController < ApplicationController
   def destroy
     @collaboration = @context.collaborations.find(params[:id])
     if authorized_action(@collaboration, @current_user, :delete)
-      @collaboration.delete_document if params[:delete_doc]
+      @collaboration.delete_document if value_to_boolean(params[:delete_doc])
       @collaboration.destroy
       respond_to do |format|
         format.html { redirect_to named_context_url(@context, :collaborations_url) }
@@ -123,9 +154,11 @@ class CollaborationsController < ApplicationController
 
   # @API List members of a collaboration.
   #
-  # Examples
+  # List the collaborators of a given collaboration
   #
-  #   curl http://<canvas>/api/v1/courses/1/collaborations/1/members
+  # @example_request
+  #
+  #   curl https://<canvas>/api/v1/courses/1/collaborations/1/members
   #
   # @returns [Collaborator]
   def members
@@ -155,5 +188,6 @@ class CollaborationsController < ApplicationController
       return false
     end
   end
+
 end
 

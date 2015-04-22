@@ -7,12 +7,14 @@ class AccessToken < ActiveRecord::Base
   serialize :scopes, Array
   validate :must_only_include_valid_scopes
 
+  has_many :notification_endpoints, dependent: :destroy
+
   # For user-generated tokens, purpose can be manually set.
   # For app-generated tokens, this should be generated based
   # on the scope defined in the auth process (scope has not
   # yet been implemented)
 
-  scope :active, lambda { where("expires_at IS NULL OR expires_at>?", Time.zone.now) }
+  scope :active, -> { where("expires_at IS NULL OR expires_at>?", Time.zone.now) }
 
   TOKEN_SIZE = 64
   OAUTH2_SCOPE_NAMESPACE = '/auth/'
@@ -21,7 +23,12 @@ class AccessToken < ActiveRecord::Base
   before_create :generate_token
 
   def self.authenticate(token_string)
-    token = self.where(:crypted_token => hashed_token(token_string)).first
+    hashed_tokens = all_hashed_tokens(token_string)
+    token = self.where(:crypted_token => hashed_tokens).first
+    if token && token.crypted_token != hashed_tokens.first
+      token.crypted_token = hashed_tokens.first
+      token.save!
+    end
     token = nil unless token.try(:usable?)
     token
   end
@@ -34,6 +41,10 @@ class AccessToken < ActiveRecord::Base
     Canvas::Security.hmac_sha1(token)
   end
 
+  def self.all_hashed_tokens(token)
+    Canvas::Security.encryption_keys.map { |key| Canvas::Security.hmac_sha1(token) }
+  end
+
   def usable?
     user_id && !expired?
   end
@@ -43,7 +54,7 @@ class AccessToken < ActiveRecord::Base
   end
 
   def record_last_used_threshold
-    Setting.get_cached('access_token_last_used_threshold', 10.minutes).to_i
+    Setting.get('access_token_last_used_threshold', 10.minutes).to_i
   end
 
   def used!
@@ -69,7 +80,7 @@ class AccessToken < ActiveRecord::Base
 
   def generate_token(overwrite=false)
     if overwrite || !self.crypted_token
-      self.token = AutoHandle.generate(nil, TOKEN_SIZE)
+      self.token = CanvasSlug.generate(nil, TOKEN_SIZE)
     end
   end
 
@@ -95,6 +106,10 @@ class AccessToken < ActiveRecord::Base
 
   #Scoped token convenience method
   def scoped_to?(req_scopes)
+    self.class.scopes_match?(scopes, req_scopes)
+  end
+
+  def self.scopes_match?(scopes, req_scopes)
     return req_scopes.size == 0 if scopes.nil?
 
     scopes.size == req_scopes.size &&

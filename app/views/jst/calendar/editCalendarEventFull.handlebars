@@ -1,3 +1,7 @@
+<h1 class="screenreader-only">
+  {{#if newRecord}}{{#t "new_calendar_event_header"}}New Calendar Event{{/t}}
+  {{else}}{{#t "edit_calendar_event_header"}}Edit Calendar Event{{/t}}{{/if}}
+</h1>
 <form id="editCalendarEventFull" class="{{#if use_section_dates}}use_section_dates{{/if}}">
   <input type="text"
          name="title"
@@ -7,13 +11,22 @@
          value="{{title}}"
          maxlength="255" />
 
+  <div class="clearfix  pull-right">
+    <a href="#" class="switch_event_description_view pull-right">
+      {{#t "#editor.switch_editor_html"}}HTML Editor{{/t}}
+    </a>
+    <a href="#" class="switch_event_description_view pull-right" style="display:none;">
+      {{#t "#editor.switch_editor_rich_text"}}Rich Content Editor{{/t}}
+    </a>
+  </div>
+  <div style="clear:both;"></div>
   <textarea class="input-block-level"
             name="description"
             aria-label="{{#t "event_description"}}Event Description{{/t}}"
             style="width: 100%">{{description}}</textarea>
 
   {{#if course_sections}}
-    <label class="label_with_checkbox">
+    <label class="label_with_checkbox" for="use_section_dates">
       {{checkbox "use_section_dates"}}
       {{#t "different_date_for_each_section"}}Use a different date for each section{{/t}}
     </label>
@@ -28,29 +41,68 @@
       <tbody>
         <tr>
           <td>
-            <input type="text"
-                   name="start_date"
-                   class="date_field"
-                   value="{{tDateToString start_at "medium"}}"
-                   aria-label="{{#t "date"}}Date{{/t}}"
-                   placeholder="{{#t "date"}}Date{{/t}}" />
+            <div class='date_field_container'>
+              <label class='screenreader-only' id='calendar_event_date_accessible_label'>
+                {{#t}}Event Date{{/t}}
+                {{datepickerScreenreaderPrompt 'date'}}
+              </label>
+              <input type="text"
+                     name="start_date"
+                     class="date_field"
+                     value="{{tDateToString start_at "medium"}}"
+                     placeholder="{{#t "date"}}Date{{/t}}"
+                     aria-labelledby='calendar_event_date_accessible_label'
+                     data-tooltip title="{{accessibleDateFormat 'date'}}"/>
+            </div>
           </td>
           <td>
-            <input type="text"
-                   name="start_time"
-                   class="time_field"
-                   {{#unless all_day}} value="{{tTimeToString start_at "tiny"}}" {{/unless}}
-                   aria-label="{{#t "start_time"}}Start Time{{/t}}"
-                   placeholder="{{#t "start_time"}}Start Time{{/t}}" />
+            <div class='date_field_container'>
+              <label class='screenreader-only' id='calendar_event_start_time_accessible_label'>
+                {{#t}}Event Start Time{{/t}}
+                {{datepickerScreenreaderPrompt 'time'}}
+              </label>
+              <input type="text"
+                     name="start_time"
+                     class="time_field"
+                     {{#unless all_day}} value="{{tTimeToString start_at "tiny"}}" {{/unless}}
+                     placeholder="{{#t "start_time"}}Start Time{{/t}}"
+                     aria-labelledby='calendar_event_start_time_accessible_label'
+                     data-tooltip title="{{accessibleDateFormat 'time'}}"/>
+            </div>
           </td>
           <td><span class="time_separator">-</span></td>
           <td>
-            <input type="text"
-                   name="end_time"
-                   class="time_field"
-                   {{#unless all_day}} value="{{tTimeToString end_at "tiny"}}" {{/unless}}
-                   aria-label="{{#t "end_time"}}End Time{{/t}}"
-                   placeholder="{{#t "end_time"}}End Time{{/t}}" />
+            <div class='date_field_container'>
+              <label class='screenreader-only' id='calendar_event_end_time_accessible_label'>
+                {{#t}}Event End Time{{/t}}
+                {{datepickerScreenreaderPrompt 'time'}}
+              </label>
+              <input type="text"
+                     name="end_time"
+                     class="time_field"
+                     {{#unless all_day}} value="{{tTimeToString end_at "tiny"}}" {{/unless}}
+                     placeholder="{{#t "end_time"}}End Time{{/t}}"
+                     aria-labelledby='calendar_event_end_time_accessible_label'
+                     data-tooltip title="{{accessibleDateFormat 'time'}}"/>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div>
+    <table id="calendar_event_location_info">
+      <tbody>
+        <tr>
+          <td>
+            <label for="calendar_event_location_name">{{#t "location_name"}}Location:{{/t}}</label>
+            <input id="calendar_event_location_name" name="location_name" size="30" maxlength="255" type="text" value="{{location_name}}"/>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <label for="calendar_event_location_address">{{#t "location_address"}}Address:{{/t}}</label>
+            <input id="calendar_event_location_address" name="location_address" size="30" maxlength="255" type="text" value="{{location_address}}"/>
           </td>
         </tr>
       </tbody>
@@ -105,7 +157,7 @@
       <button type="button" class="btn delete_link">{{#t "delete"}}Delete{{/t}}</button>
     {{/if}}
     {{#if return_to_url}}
-      <a href="{{return_to_url}}" class="btn">{{#t "#buttons.cancel"}}Cancel{{/t}}</a>
+      <a href="{{return_to_url}}" class="btn" role="button">{{#t "#buttons.cancel"}}Cancel{{/t}}</a>
     {{/if}}
     <button type="submit" class="btn btn-primary">
       {{#if newRecord}}

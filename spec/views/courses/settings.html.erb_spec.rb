@@ -28,6 +28,7 @@ describe "courses/settings.html.erb" do
     assigns[:context] = @course
     assigns[:user_counts] = {}
     assigns[:all_roles] = Role.custom_roles_and_counts_for_course(@course, @user)
+    assigns[:course_settings_sub_navigation_tools] = []
   end
 
   describe "sis_source_id edit box" do
@@ -35,8 +36,8 @@ describe "courses/settings.html.erb" do
       view_context(@course, @user)
       assigns[:current_user] = @user
       render
-      response.should have_tag("span.sis_source_id", @course.sis_source_id)
-      response.should_not have_tag("input#course_sis_source_id")
+      expect(response).to have_tag("span#course_sis_source_id", @course.sis_source_id)
+      expect(response).not_to have_tag("input#course_sis_source_id")
     end
 
     it "should show to sis admin" do
@@ -44,15 +45,16 @@ describe "courses/settings.html.erb" do
       view_context(@course, admin)
       assigns[:current_user] = admin
       render
-      response.should have_tag("input#course_sis_source_id")
+      expect(response).to have_tag("input#course_sis_source_id")
     end
 
     it "should not show to non-sis admin" do
-      admin = account_admin_user_with_role_changes(:account => @course.root_account, :role_changes => {'manage_sis' => false}, :membership_type => "NoSissy")
+      role = custom_account_role('NoSissy', :account => @course.root_account)
+      admin = account_admin_user_with_role_changes(:account => @course.root_account, :role_changes => {'manage_sis' => false}, :role => role)
       view_context(@course, admin)
       assigns[:current_user] = admin
       render
-      response.should_not have_tag("input#course_sis_source_id")
+      expect(response).not_to have_tag("input#course_sis_source_id")
     end
 
     it "should show grade export when enabled" do
@@ -61,8 +63,8 @@ describe "courses/settings.html.erb" do
       view_context(@course, admin)
       assigns[:current_user] = admin
       render
-      response.body.should =~ /<a href="#tab-grade-publishing" id="tab-grade-publishing-link">/
-      response.body.should =~ /<div id="tab-grade-publishing">/
+      expect(response.body).to match /<a href="#tab-grade-publishing" id="tab-grade-publishing-link">/
+      expect(response.body).to match /<div id="tab-grade-publishing">/
     end
 
     it "should not show grade export when disabled" do
@@ -71,32 +73,9 @@ describe "courses/settings.html.erb" do
       view_context(@course, admin)
       assigns[:current_user] = admin
       render
-      response.body.should_not =~ /<a href="#tab-grade-publishing" id="tab-grade-publishing-link">/
-      response.body.should_not =~ /<div id="tab-grade-publishing">/
+      expect(response.body).not_to match /<a href="#tab-grade-publishing" id="tab-grade-publishing-link">/
+      expect(response.body).not_to match /<div id="tab-grade-publishing">/
     end
-  end
-
-  describe "add user link" do
-    it "should not show add user link for hard concluded course" do
-      admin = account_admin_user(:account => @course.root_account)
-      @course.complete
-      view_context(@course, admin)
-      assigns[:current_user] = admin
-      render
-      response.should_not have_tag('.add_users_link')
-    end
-
-    it "should not show add user link for soft concluded course" do
-      admin = account_admin_user(:account => @course.root_account)
-      @course.conclude_at = 1.day.ago
-      @course.restrict_enrollments_to_course_dates = true
-      @course.save!
-      view_context(@course, admin)
-      assigns[:current_user] = admin
-      render
-      response.should_not have_tag('.add_users_link')
-    end
-
   end
 
   describe "quota box" do
@@ -106,25 +85,73 @@ describe "courses/settings.html.erb" do
         view_context(@course, admin)
         assigns[:current_user] = admin
       end
-  
+
       it "should show quota input box" do
         render
-        response.should have_tag "input#course_storage_quota_mb"
+        expect(response).to have_tag "input#course_storage_quota_mb"
       end
     end
-  
+
     context "as teacher" do
       before do
         view_context(@course, @teacher)
         assigns[:current_user] = @teacher
         @user = @teacher
       end
-  
+
       it "should not show quota input box" do
         render
-        response.should_not have_tag "input#course_storage_quota_mb"
+        expect(response).not_to have_tag "input#course_storage_quota_mb"
       end
     end
   end
-    
+
+  context "account_id selection" do
+    it "should let sub-account admins see other accounts within their sub-account as options" do
+      root_account = Account.create!(:name => 'root')
+      subaccount = account_model(:parent_account => root_account)
+      other_subaccount = account_model(:parent_account => root_account) # should not include
+      sub_subaccount1 = account_model(:parent_account => subaccount)
+      sub_subaccount2 = account_model(:parent_account => subaccount)
+
+      @course.account = sub_subaccount1
+      @course.save!
+
+      @user = account_admin_user(:account => subaccount, :active_user => true)
+      expect(root_account.grants_right?(@user, :manage_courses)).to be_falsey
+      view_context(@course, @user)
+
+      render
+      doc = Nokogiri::HTML(response.body)
+      select = doc.at_css("select#course_account_id")
+      expect(select).not_to be_nil
+      #select.children.count.should == 3
+
+      option_ids = select.search("option").map{|c| c.attributes["value"].value.to_i rescue c.to_s}
+      expect(option_ids.sort).to eq [subaccount.id, sub_subaccount1.id, sub_subaccount2.id].sort
+    end
+
+    it "should let site admins see all accounts within their root account as options" do
+      root_account = Account.create!(:name => 'root')
+      subaccount = account_model(:parent_account => root_account)
+      other_subaccount = account_model(:parent_account => root_account)
+      sub_subaccount1 = account_model(:parent_account => subaccount)
+      sub_subaccount2 = account_model(:parent_account => subaccount)
+
+      @course.account = sub_subaccount1
+      @course.save!
+
+      @user = site_admin_user
+      view_context(@course, @user)
+
+      render
+      doc = Nokogiri::HTML(response.body)
+      select = doc.at_css("select#course_account_id")
+      expect(select).not_to be_nil
+      all_accounts = [root_account] + root_account.all_accounts
+
+      option_ids = select.search("option").map{|c| c.attributes["value"].value.to_i}
+      expect(option_ids.sort).to eq all_accounts.map(&:id).sort
+    end
+  end
 end

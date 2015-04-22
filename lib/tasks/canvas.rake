@@ -2,6 +2,13 @@ $canvas_tasks_loaded ||= false
 unless $canvas_tasks_loaded
 $canvas_tasks_loaded = true
 
+def log_time(name, &block)
+  puts "--> Starting: '#{name}'"
+  time = Benchmark.realtime(&block)
+  puts "--> Finished: '#{name}' in #{time}"
+  time
+end
+
 def check_syntax(files)
   quick = ENV["quick"] && ENV["quick"] == "true"
   puts "--> Checking Syntax...."
@@ -12,7 +19,7 @@ def check_syntax(files)
   Array(files).each do |js_file|
     js_file.strip!
     # only lint things in public/javascripts that are not in /vendor, /compiled, etc.
-    if js_file.match /public\/javascripts\/(?!vendor|compiled|i18n.js|translations)/
+    if js_file.match /public\/javascripts\/(?!vendor|compiled|i18n.js|translations|old_unsupported_dont_use_react)/
       file_path = File.join(Rails.root, js_file)
 
       unless quick
@@ -98,33 +105,71 @@ namespace :canvas do
   end
 
   desc "Compile javascript and css assets."
-  task :compile_assets, :generate_documentation do |t, args|
-    args.with_defaults(:generate_documentation => 'true')
-    generate_docs = args[:generate_documentation]
-    generate_docs = 'true' if !['true', 'false'].include?(args[:generate_documentation])
+  task :compile_assets, :generate_documentation, :check_syntax, :compile_css, :build_js do |t, args|
+    args.with_defaults(:generate_documentation => true, :check_syntax => false, :compile_css => true, :build_js => true)
+    truthy_values = [true, 'true', '1']
+    generate_documentation = truthy_values.include?(args[:generate_documentation])
+    check_syntax = truthy_values.include?(args[:check_syntax])
+    compile_css = truthy_values.include?(args[:compile_css])
+    build_js = truthy_values.include?(args[:build_js])
 
-    puts "--> Compiling static assets [css]"
-    Rake::Task['css:generate'].invoke
-    Rake::Task['css:styleguide'].invoke
+    require 'parallel'
+    processes = (ENV['CANVAS_BUILD_CONCURRENCY'] || Parallel.processor_count).to_i
+    puts "working in #{processes} processes"
 
-    puts "--> Compiling static assets [jammit]"
-    output = `bundle exec jammit 2>&1`
-    raise "Error running jammit: \n#{output}\nABORTING" if $?.exitstatus != 0
-    puts "--> Compiled static assets [css/jammit]"
+    tasks = Hash.new
 
-    puts "--> Compiling static assets [javascript]"
-    Rake::Task['js:generate'].invoke
+    if compile_css
+      tasks["Compile sass and make jammit css bundles"] = -> {
+        log_time('npm run compile-sass') do
+          half_of_avilable_cores = (processes / 2).ceil.to_s
+          raise unless system({"CANVAS_SASS_STYLE" => "compressed", "CANVAS_BUILD_CONCURRENCY" => half_of_avilable_cores}, "npm run compile-sass")
+        end
 
-    puts "--> Generating js localization bundles"
-    Rake::Task['i18n:generate_js'].invoke
+        log_time("Jammit") do
+          require 'jammit'
+          Jammit.package!
+        end
+      }
+      tasks["css:styleguide"] = -> {
+        Rake::Task['css:styleguide'].invoke
+      }
+    end
 
-    puts "--> Optimizing JavaScript [r.js]"
-    Rake::Task['js:build'].invoke
+    if build_js
+      tasks["compile coffee, js 18n, and run r.js optimizer"] = -> {
+        ['js:generate', 'i18n:generate_js', 'js:build'].each do |name|
+          log_time(name) { Rake::Task[name].invoke }
+        end
+      }
+    else
+      tasks["compile coffee"] = -> {
+        ['js:generate'].each do |name|
+          log_time(name) { Rake::Task[name].invoke }
+        end
+      }
+    end
 
-    if generate_docs == 'true'
-      puts "--> Generating documentation [yardoc]"
-      Rake::Task['doc:api'].invoke
+    if check_syntax
+      tasks["check JavaScript syntax"] = -> {
+        Rake::Task['canvas:check_syntax'].invoke
+      }
+    end
+
+    if generate_documentation
+      tasks["Generate documentation [yardoc]"] = -> {
+        Rake::Task['doc:api'].invoke
+      }
+    end
+
+    times = nil
+    real_time = Benchmark.realtime do
+      times = Parallel.map(tasks, :in_processes => processes.to_i) do |name, lamduh|
+        log_time(name) { lamduh.call }
       end
+    end
+    combined_time = times.reduce(:+)
+    puts "Finished compiling assets in #{real_time}. parallelism saved #{combined_time - real_time} (#{real_time.to_f / combined_time.to_f * 100.0}%)"
   end
 
   desc "Check static assets and generate api documentation."
@@ -163,6 +208,20 @@ namespace :lint do
       raise "lint:render_json test failed"
     else
       puts "lint:render_json test succeeded"
+    end
+  end
+end
+
+if Rails.version < '4.1'
+  old_task = Rake::Task['db:_dump']
+  old_actions = old_task.actions.dup
+  old_task.actions.clear
+
+  old_task.enhance do
+    if ActiveRecord::Base.dump_schema_after_migration == false
+      # do nothing
+    else
+      old_actions.each(&:call)
     end
   end
 end
@@ -210,17 +269,32 @@ namespace :db do
       queue = config['queue']
       drop_database(queue) if queue rescue nil
       drop_database(config) rescue nil
-      Canvas::Cassandra::Database.config_names.each do |cass_config|
-        db = Canvas::Cassandra::Database.from_config(cass_config)
-        db.keyspace_information.tables.each do |table|
+      Canvas::Cassandra::DatabaseBuilder.config_names.each do |cass_config|
+        db = Canvas::Cassandra::DatabaseBuilder.from_config(cass_config)
+        db.tables.each do |table|
           db.execute("DROP TABLE #{table}")
         end
       end
       create_database(queue) if queue
       create_database(config)
+      ::ActiveRecord::Base.connection.schema_cache.clear!
+      ::ActiveRecord::Base.descendants.each(&:reset_column_information)
       Rake::Task['db:migrate'].invoke
     end
   end
 end
+
+Switchman::Rake.filter_database_servers do |servers, block|
+  if ENV['REGION']
+    if ENV['REGION'] == 'self'
+      servers.select!(&:in_current_region?)
+    else
+      servers.select! { |server| server.in_region?(ENV['REGION']) }
+    end
+  end
+  block.call(servers)
+end
+
+%w{db:pending_migrations db:migrate:predeploy db:migrate:postdeploy}.each { |task_name| Switchman::Rake.shardify_task(task_name) }
 
 end

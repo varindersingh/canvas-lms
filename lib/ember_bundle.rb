@@ -1,9 +1,10 @@
 require 'active_support/inflector'
+require 'fileutils'
 
 class EmberBundle
   attr_accessor :app_name, :paths, :objects, :assigns
 
-  ASSIGNABLE = %w(components controllers models routes views)
+  ASSIGNABLE = %w(components controllers models routes views adapters serializers)
 
   def initialize(app_name, opts={})
     @app_name = app_name
@@ -40,9 +41,15 @@ class EmberBundle
   end
 
   def build
-    main_path = "app/coffeescripts/ember/#{@app_name}/main.coffee"
     bundle_path = "public/javascripts/compiled/bundles/#{@app_name}.js"
+
+    # if there is nothing in our app besides auto-generated
+    # .gitignor'ed stuff, clean up and continue
+    return FileUtils::rm_rf([@root, bundle_path], verbose: true) if @assigns.empty?
+
+    main_path = "#{@root}/main.coffee"
     File.open(main_path, 'w') { |f| f.write build_output }
+    FileUtils.mkdir_p 'public/javascripts/compiled/bundles'
     File.open(bundle_path, 'w') do |f|
       f.write "require(['compiled/ember/#{@app_name}/main'], function(App) { window.App = App.create(); });"
     end

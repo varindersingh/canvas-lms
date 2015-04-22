@@ -7,7 +7,7 @@ def set_default_grade(cell_index, points = "5")
   f('.grading_value').send_keys(points)
   submit_dialog(dialog, '.ui-button')
   keep_trying_until do
-    driver.switch_to.alert.should_not be_nil
+    expect(driver.switch_to.alert).not_to be_nil
     driver.switch_to.alert.dismiss
     true
   end
@@ -22,11 +22,11 @@ def toggle_muting(assignment)
 end
 
 def open_assignment_options(cell_index)
-  assignment_cell = ffj('#gradebook_grid .slick-header-column')[cell_index]
+  assignment_cell = ffj('#gradebook_grid .container_1 .slick-header-column')[cell_index]
   driver.action.move_to(assignment_cell).perform
   trigger = assignment_cell.find_element(:css, '.gradebook-header-drop')
   trigger.click
-  fj("##{trigger['aria-owns']}").should be_displayed
+  expect(fj("##{trigger['aria-owns']}")).to be_displayed
 end
 
 def find_slick_cells(row_index, element)
@@ -38,8 +38,11 @@ end
 
 def edit_grade(cell, grade)
   grade_input = keep_trying_until do
-    cell.click
-    cell.find_element(:css, '.grade')
+    driver.execute_script("$('#{cell}').hover().click()")
+    sleep 1
+    input = fj("#{cell} .grade")
+    expect(input).not_to be_nil
+    input
   end
   set_value(grade_input, grade)
   grade_input.send_keys(:return)
@@ -47,23 +50,23 @@ def edit_grade(cell, grade)
 end
 
 def validate_cell_text(cell, text)
-  cell.text.should == text
+  expect(cell.text).to eq text
   cell.text
 end
 
 def open_gradebook_settings(element_to_click = nil)
   keep_trying_until do
     f('#gradebook_settings').click
-    ff('#gradebook-toolbar ul.ui-kyle-menu').last.should be_displayed
+    expect(ff('#gradebook-toolbar ul.ui-kyle-menu').last).to be_displayed
     true
   end
-  yield(driver.find_element(:css, '#gradebook_settings')) if block_given?
+  yield(f('#gradebook_settings')) if block_given?
   element_to_click.click if element_to_click != nil
 end
 
 def open_comment_dialog(x=0, y=0)
   #move_to occasionally breaks in the hudson build
-  cell = driver.execute_script "return $('#gradebook_grid .slick-row:nth-child(#{y+1}) .slick-cell:nth-child(#{x+1})').addClass('hover')[0]"
+  cell = driver.execute_script "return $('#gradebook_grid .container_1 .slick-row:nth-child(#{y+1}) .slick-cell:nth-child(#{x+1})').addClass('hover')[0]"
   cell.find_element(:css, '.gradebook-cell-comment').click
   # the dialog fetches the comments async after it displays and then innerHTMLs the whole
   # thing again once it has fetched them from the server, completely replacing it
@@ -72,7 +75,7 @@ def open_comment_dialog(x=0, y=0)
 end
 
 def final_score_for_row(row)
-  grade_grid = f('#gradebook_grid')
+  grade_grid = f('#gradebook_grid .container_1')
   cells = find_slick_cells(row, grade_grid)
   cells[4].find_element(:css, '.percentage').text
 end
@@ -80,33 +83,17 @@ end
 def switch_to_section(section=nil)
   section = section.id if section.is_a?(CourseSection)
   section ||= ""
-  fj('#section_to_show').click
-  keep_trying_until { f('#section-to-show-menu').should be_displayed }
+  fj('.section-select-button:visible').click
+  keep_trying_until { expect(fj('.section-select-menu:visible')).to be_displayed }
   fj("label[for='section_option_#{section}']").click
   wait_for_ajaximations
-end
-
-# `students` should be a hash of student_id, expected total pairs, like:
-# {
-#   1 => '12%',
-#   3 => '86.7%',
-# }
-def check_gradebook_1_totals(students)
-  get "/courses/#{@course.id}/gradebook"
-  # this keep_trying_untill is there because gradebook1 loads it's cells in a bunch of setTimeouts
-  keep_trying_until do
-    students.each do |student_id, expected_score|
-      row_total = f(".final_grade .student_#{student_id} .grade").text + '%'
-      row_total.should == expected_score
-    end
-  end
 end
 
 def conclude_and_unconclude_course
   #conclude course
   @course.complete!
   @user.reload
-  @user.cached_current_enrollments(:reload)
+  @user.cached_current_enrollments
   @enrollment.reload
 
   #un-conclude course
@@ -115,28 +102,49 @@ def conclude_and_unconclude_course
   @course.reload
 end
 
-def data_setup
-  course_with_teacher_logged_in
-  assignment_setup
+def gradebook_data_setup(opts={})
+  assignment_setup_defaults
+  assignment_setup(opts)
 end
 
 def data_setup_as_observer
-  course_with_observer_logged_in
+  user_with_pseudonym
+  course_with_observer_logged_in user: @user
   @course.observers=[@observer]
+  assignment_setup_defaults
   assignment_setup
   @all_students.each {|s| s.observers=[@observer]}
 end
 
-def assignment_setup
-  course_with_teacher_logged_in
+def assignment_setup_defaults
+  @assignment_1_points = "10"
+  @assignment_2_points = "5"
+  @assignment_3_points = "50"
+  @attendance_points = "15"
+
+  @student_name_1 = "student 1"
+  @student_name_2 = "student 2"
+  @student_name_3 = "student 3"
+
+  @student_1_total_ignoring_ungraded = "100%"
+  @student_2_total_ignoring_ungraded = "66.7%"
+  @student_3_total_ignoring_ungraded = "66.7%"
+  @student_1_total_treating_ungraded_as_zeros = "18.8%"
+  @student_2_total_treating_ungraded_as_zeros = "12.5%"
+  @student_3_total_treating_ungraded_as_zeros = "12.5%"
+  @default_password = "qwerty"
+end
+
+def assignment_setup(opts={})
+  course_with_teacher_logged_in(opts)
   @course.grading_standard_enabled = true
   @course.save!
   @course.reload
 
   #add first student
-  @student_1 = User.create!(:name => STUDENT_NAME_1)
+  @student_1 = User.create!(:name => @student_name_1)
   @student_1.register!
-  @student_1.pseudonyms.create!(:unique_id => "nobody1@example.com", :password => DEFAULT_PASSWORD, :password_confirmation => DEFAULT_PASSWORD)
+  @student_1.pseudonyms.create!(:unique_id => "nobody1@example.com", :password => @default_password, :password_confirmation => @default_password)
 
   e1 = @course.enroll_student(@student_1)
   e1.workflow_state = 'active'
@@ -144,9 +152,9 @@ def assignment_setup
   @course.reload
   #add second student
   @other_section = @course.course_sections.create(:name => "the other section")
-  @student_2 = User.create!(:name => STUDENT_NAME_2)
+  @student_2 = User.create!(:name => @student_name_2)
   @student_2.register!
-  @student_2.pseudonyms.create!(:unique_id => "nobody2@example.com", :password => DEFAULT_PASSWORD, :password_confirmation => DEFAULT_PASSWORD)
+  @student_2.pseudonyms.create!(:unique_id => "nobody2@example.com", :password => @default_password, :password_confirmation => @default_password)
   e2 = @course.enroll_student(@student_2, :section => @other_section)
 
   e2.workflow_state = 'active'
@@ -154,9 +162,9 @@ def assignment_setup
   @course.reload
 
   #add third student
-  @student_3 = User.create!(:name => STUDENT_NAME_3)
+  @student_3 = User.create!(:name => @student_name_3)
   @student_3.register!
-  @student_3.pseudonyms.create!(:unique_id => "nobody3@example.com", :password => DEFAULT_PASSWORD, :password_confirmation => DEFAULT_PASSWORD)
+  @student_3.pseudonyms.create!(:unique_id => "nobody3@example.com", :password => @default_password, :password_confirmation => @default_password)
   e3 = @course.enroll_student(@student_3)
   e3.workflow_state = 'active'
   e3.save!
@@ -170,7 +178,7 @@ def assignment_setup
                                            :course => @course,
                                            :name => 'A name that would not reasonably fit in the header cell which should have some limit set',
                                            :due_at => nil,
-                                           :points_possible => ASSIGNMENT_1_POINTS,
+                                           :points_possible => @assignment_1_points,
                                            :submission_types => 'online_text_entry,online_upload',
                                            :assignment_group => @group
                                        })
@@ -199,7 +207,7 @@ def assignment_setup
                                             :course => @course,
                                             :name => 'second assignment',
                                             :due_at => nil,
-                                            :points_possible => ASSIGNMENT_2_POINTS,
+                                            :points_possible => @assignment_2_points,
                                             :submission_types => 'online_text_entry',
                                             :assignment_group => @group
                                         })
@@ -218,7 +226,7 @@ def assignment_setup
                                            :course => @course,
                                            :name => 'assignment three',
                                            :due_at => due_date,
-                                           :points_possible => ASSIGNMENT_3_POINTS,
+                                           :points_possible => @assignment_3_points,
                                            :submission_types => 'online_text_entry',
                                            :assignment_group => @group
                                        })
@@ -230,7 +238,7 @@ def assignment_setup
                                                 :name => 'attendance assignment',
                                                 :title => 'attendance assignment',
                                                 :due_at => nil,
-                                                :points_possible => ATTENDANCE_POINTS,
+                                                :points_possible => @attendance_points,
                                                 :submission_types => 'attendance',
                                                 :assignment_group => @group,
                                             })

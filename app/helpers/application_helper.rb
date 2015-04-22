@@ -19,7 +19,9 @@
 # Methods added to this helper will be available to all templates in the application.
 module ApplicationHelper
   include TextHelper
+  include HtmlTextHelper
   include LocaleSelection
+  include Canvas::LockExplanation
 
   def context_user_name(context, user)
     return nil unless user
@@ -60,136 +62,6 @@ module ApplicationHelper
     @cached_context_names ||= {}
     @cached_context_names[code] ||= Rails.cache.fetch(['short_name_lookup', code].cache_key) do
       Context.find_by_asset_string(code).short_name rescue ""
-    end
-  end
-
-  def lock_explanation(hash, type, context=nil)
-    # Any additions to this function should also be made in javascripts/content_locks.js
-    if hash[:lock_at]
-      case type
-      when "quiz"
-        return I18n.t('messages.quiz_locked_at', "This quiz was locked %{at}.", :at => datetime_string(hash[:lock_at]))
-      when "assignment"
-        return I18n.t('messages.assignment_locked_at', "This assignment was locked %{at}.", :at => datetime_string(hash[:lock_at]))
-      when "topic"
-        return I18n.t('messages.topic_locked_at', "This topic was locked %{at}.", :at => datetime_string(hash[:lock_at]))
-      when "file"
-        return I18n.t('messages.file_locked_at', "This file was locked %{at}.", :at => datetime_string(hash[:lock_at]))
-      when "page"
-        return I18n.t('messages.page_locked_at', "This page was locked %{at}.", :at => datetime_string(hash[:lock_at]))
-      else
-        return I18n.t('messages.content_locked_at', "This content was locked %{at}.", :at => datetime_string(hash[:lock_at]))
-      end
-    elsif hash[:unlock_at]
-      case type
-      when "quiz"
-        return I18n.t('messages.quiz_locked_until', "This quiz is locked until %{date}.", :date => datetime_string(hash[:unlock_at]))
-      when "assignment"
-        return I18n.t('messages.assignment_locked_until', "This assignment is locked until %{date}.", :date => datetime_string(hash[:unlock_at]))
-      when "topic"
-        return I18n.t('messages.topic_locked_until', "This topic is locked until %{date}.", :date => datetime_string(hash[:unlock_at]))
-      when "file"
-        return I18n.t('messages.file_locked_until', "This file is locked until %{date}.", :date => datetime_string(hash[:unlock_at]))
-      when "page"
-        return I18n.t('messages.page_locked_until', "This page is locked until %{date}.", :date => datetime_string(hash[:unlock_at]))
-      else
-        return I18n.t('messages.content_locked_until', "This content is locked until %{date}.", :date => datetime_string(hash[:unlock_at]))
-      end
-    elsif hash[:context_module]
-      obj = hash[:context_module].is_a?(ContextModule) ? hash[:context_module] : OpenObject.new(hash[:context_module])
-      html = if obj.workflow_state == 'unpublished'
-        case type
-          when "quiz"
-            I18n.t('messages.quiz_unpublished_module', "This quiz is part of an unpublished module and is not available yet.")
-          when "assignment"
-            I18n.t('messages.assignment_unpublished_module', "This assignment is part of an unpublished module and is not available yet.")
-          when "topic"
-            I18n.t('messages.topic_unpublished_module', "This topic is part of an unpublished module and is not available yet.")
-          when "file"
-            I18n.t('messages.file_unpublished_module', "This file is part of an unpublished module and is not available yet.")
-          when "page"
-            I18n.t('messages.page_unpublished_module', "This page is part of an unpublished module and is not available yet.")
-          else
-            I18n.t('messages.content_unpublished_module', "This content is part of an unpublished module and is not available yet.")
-        end
-      else
-        case type
-          when "quiz"
-            I18n.t('messages.quiz_locked_module', "This quiz is part of the module *%{module}* and hasn't been unlocked yet.",
-              :module => TextHelper.escape_html(obj.name), :wrapper => '<b>\1</b>')
-          when "assignment"
-            I18n.t('messages.assignment_locked_module', "This assignment is part of the module *%{module}* and hasn't been unlocked yet.",
-              :module => TextHelper.escape_html(obj.name), :wrapper => '<b>\1</b>')
-          when "topic"
-            I18n.t('messages.topic_locked_module', "This topic is part of the module *%{module}* and hasn't been unlocked yet.",
-              :module => TextHelper.escape_html(obj.name), :wrapper => '<b>\1</b>')
-          when "file"
-            I18n.t('messages.file_locked_module', "This file is part of the module *%{module}* and hasn't been unlocked yet.",
-              :module => TextHelper.escape_html(obj.name), :wrapper => '<b>\1</b>')
-          when "page"
-            I18n.t('messages.page_locked_module', "This page is part of the module *%{module}* and hasn't been unlocked yet.",
-              :module => TextHelper.escape_html(obj.name), :wrapper => '<b>\1</b>')
-          else
-            I18n.t('messages.content_locked_module', "This content is part of the module *%{module}* and hasn't been unlocked yet.",
-              :module => TextHelper.escape_html(obj.name), :wrapper => '<b>\1</b>')
-        end
-      end
-      if context && (obj.workflow_state != 'unpublished')
-        html << "<br/>".html_safe
-        html << I18n.t('messages.visit_modules_page', "*Visit the course modules page for information on how to unlock this content.*",
-          :wrapper => "<a href='#{context_url(context, :context_context_modules_url)}'>\\1</a>")
-        html << "<a href='#{context_url(context, :context_context_module_prerequisites_needing_finishing_url, obj.id, hash[:asset_string])}' style='display: none;' id='module_prerequisites_lookup_link'>&nbsp;</a>".html_safe
-        js_bundle :prerequisites_lookup
-      end
-      return html
-    else
-      case type
-      when "quiz"
-        return I18n.t('messages.quiz_locked', "This quiz is currently locked.")
-      when "assignment"
-        return I18n.t('messages.assignment_locked', "This assignment is currently locked.")
-      when "topic"
-        return I18n.t('messages.topic_locked', "This topic is currently locked.")
-      when "file"
-        return I18n.t('messages.file_locked', "This file is currently locked.")
-      when "page"
-        return I18n.t('messages.page_locked', "This page is currently locked.")
-      else
-        return I18n.t('messages.content_locked', "This quiz is currently locked.")
-      end
-    end
-  end
-
-  def avatar_image(user_or_id, width=50, opts = {})
-    user_id = user_or_id.is_a?(User) ? user_or_id.id : user_or_id
-    user = user_or_id.is_a?(User) && user_or_id
-    if session["reported_#{user_id}"]
-      image_tag "messages/avatar-50.png"
-    else
-      avatar_settings = @domain_root_account && @domain_root_account.settings[:avatars] || 'enabled'
-      image_url, alt_tag = Rails.cache.fetch(Cacher.inline_avatar_cache_key(user_id, avatar_settings)) do
-        if !user && user_id.to_i > 0
-          user = User.find(user_id)
-        end
-        if user
-          url = avatar_url_for_user(user)
-        else
-          url = "messages/avatar-50.png"
-        end
-        alt = user ? user.short_name : ''
-        [url, alt]
-      end
-      image_tag(image_url,
-        :style => "width: #{width}px; min-height: #{(width/1.6).to_i}px; max-height: #{(width*1.6).to_i}px",
-        :alt => alt_tag,
-        :class => Array(opts[:image_class]).join(' '))
-    end
-  end
-
-  def avatar(user_or_id, context_code, width=50, opts = {})
-    user_id = user_or_id.is_a?(User) ? user_or_id.id : user_or_id
-    if service_enabled?(:avatars)
-      link_to(avatar_image(user_or_id, width, opts), "#{context_prefix(context_code)}/users/#{user_id}", :style => 'z-index: 2; position: relative;', :class => 'avatar img-circle')
     end
   end
 
@@ -242,7 +114,7 @@ module ApplicationHelper
   end
 
   def url_helper_context_from_object(context)
-    (context ? context.class.base_ar_class : context.class).name.underscore
+    (context ? context.class.base_class : context.class).name.underscore
   end
 
   def message_user_path(user, context = nil)
@@ -266,44 +138,10 @@ module ApplicationHelper
   end
 
   # Helper for easily checking vender/plugins/adheres_to_policy.rb
-  # policies from within a view.  Caches the response, but basically
-  # user calls object.grants_right?(user, nil, action)
+  # policies from within a view.
   def can_do(object, user, *actions)
     return false unless object
-    if object.is_a?(OpenObject) && object.type
-      obj = object.temporary_instance
-      if !obj
-        obj = object.type.classify.constantize.new
-        obj.instance_variable_set("@attributes", object.instance_variable_get("@table").with_indifferent_access)
-        obj.instance_variable_set("@new_record", false)
-        object.temporary_instance = obj
-      end
-      return can_do(obj, user, actions)
-    end
-    actions = Array(actions).flatten
-    if (object == @context || object.is_a?(Course)) && user == @current_user
-      @context_all_permissions ||= {}
-      @context_all_permissions[object.asset_string] ||= object.grants_rights?(user, session, nil)
-      return !(@context_all_permissions[object.asset_string].keys & actions).empty?
-    end
-    @permissions_lookup ||= {}
-    return true if actions.any? do |action|
-      lookup = [object ? object.asset_string : nil, user ? user.id : nil, action]
-      @permissions_lookup[lookup] if @permissions_lookup[lookup] != nil
-    end
-    begin
-      rights = object.grants_rights?(user, session, *actions)
-    rescue => e
-      logger.warn "#{object.inspect} raised an error while granting rights.  #{e.inspect}" if logger
-      return false
-    end
-    res = false
-    rights.each do |action, value|
-      lookup = [object ? object.asset_string : nil, user ? user.id : nil, action]
-      @permissions_lookup[lookup] = value
-      res ||= value
-    end
-    res
+    object.grants_any_right?(user, session, *actions)
   end
 
   # Loads up the lists of files needed for the wiki_sidebar.  Called from
@@ -317,7 +155,7 @@ module ApplicationHelper
     includes.each{|i| @wiki_sidebar_data[i] ||= [] }
     @wiki_sidebar_data[:wiki_pages] = @context.wiki.wiki_pages.active.order(:title).limit(150) if @context.respond_to?(:wiki)
     @wiki_sidebar_data[:wiki_pages] ||= []
-    if can_do(@context, @current_user, :manage_files)
+    if can_do(@context, @current_user, :manage_files, :read_as_admin)
       @wiki_sidebar_data[:root_folders] = Folder.root_folders(@context)
     elsif @context.is_a?(Course) && !@context.tab_hidden?(Course::TAB_FILES)
       @wiki_sidebar_data[:root_folders] = Folder.root_folders(@context).reject{|folder| folder.locked? || folder.hidden}
@@ -342,9 +180,9 @@ module ApplicationHelper
     output = js_blocks.inject('') do |str, e|
       # print file and line number for debugging in development mode.
       value = ""
-      value << "<!-- BEGIN SCRIPT BLOCK FROM: " + e[:file_and_line] + " --> \n" if Rails.env == "development"
+      value << "<!-- BEGIN SCRIPT BLOCK FROM: " + e[:file_and_line] + " --> \n" if Rails.env.development?
       value << e[:contents]
-      value << "<!-- END SCRIPT BLOCK FROM: " + e[:file_and_line] + " --> \n" if Rails.env == "development"
+      value << "<!-- END SCRIPT BLOCK FROM: " + e[:file_and_line] + " --> \n" if Rails.env.development?
       str << value
     end
     raw(output)
@@ -412,26 +250,41 @@ module ApplicationHelper
 
   def include_css_bundles
     unless jammit_css_bundles.empty?
-      bundles = jammit_css_bundles.map{ |(bundle,plugin)| plugin ? "plugins_#{plugin}_#{bundle}" : bundle }
+      bundles = jammit_css_bundles.map do |(bundle,plugin)|
+        bundle = variant_name_for(bundle)
+        plugin ? "plugins_#{plugin}_#{bundle}" : bundle
+      end
       bundles << {:media => 'all'}
       include_stylesheets(*bundles)
     end
   end
 
+  def variant_name_for(bundle_name)
+    if k12?
+      variant = '_k12'
+    elsif use_new_styles?
+      variant = '_new_styles'
+    else
+      variant = '_legacy'
+    end
+
+    use_high_contrast = @current_user && @current_user.prefers_high_contrast?
+    variant += use_high_contrast ? '_high_contrast' : '_normal_contrast'
+    "#{bundle_name}#{variant}"
+  end
+
   def include_common_stylesheets
-    include_stylesheets :vendor, :common, media: "all"
+    include_stylesheets variant_name_for(:vendor), variant_name_for(:common), media: "all"
   end
 
   def section_tabs
     @section_tabs ||= begin
       if @context
         html = []
-        tabs = Rails.cache.fetch([@context, @current_user, @domain_root_account, "section_tabs_hash", I18n.locale].cache_key) do
+        tabs = Rails.cache.fetch([@context, @current_user, @domain_root_account, Lti::NavigationCache.new(@domain_root_account),  "section_tabs_hash", I18n.locale].cache_key, expires_in: 1.hour) do
           if @context.respond_to?(:tabs_available) && !(tabs = @context.tabs_available(@current_user, :session => session, :root_account => @domain_root_account)).empty?
             tabs.select do |tab|
-              if (tab[:id] == @context.class::TAB_CHAT rescue false)
-                tab[:href] && tab[:label] && feature_enabled?(:tinychat)
-              elsif (tab[:id] == @context.class::TAB_COLLABORATIONS rescue false)
+              if (tab[:id] == @context.class::TAB_COLLABORATIONS rescue false)
                 tab[:href] && tab[:label] && Collaboration.any_collaborations_configured?
               elsif (tab[:id] == @context.class::TAB_CONFERENCES rescue false)
                 tab[:href] && tab[:label] && feature_enabled?(:web_conferences)
@@ -444,20 +297,34 @@ module ApplicationHelper
           end
         end
         return '' if tabs.empty?
+
+        inactive_element = "<span id='inactive_nav_link' class='screenreader-only'>#{I18n.t('* No content has been added')}</span>"
+
         html << '<nav role="navigation" aria-label="context"><ul id="section-tabs">'
         tabs.each do |tab|
           path = nil
           if tab[:args]
-            path = send(tab[:href], *tab[:args])
+            path = tab[:args].instance_of?(Array) ? send(tab[:href], *tab[:args]) : send(tab[:href], tab[:args])
           elsif tab[:no_args]
             path = send(tab[:href])
           else
             path = send(tab[:href], @context)
           end
           hide = tab[:hidden] || tab[:hidden_unused]
-          class_name = tab[:css_class].to_css_class
+          class_name = tab[:css_class].downcase.replace_whitespace("-")
           class_name += ' active' if @active_tab == tab[:css_class]
-          html << "<li class='section #{"section-tab-hidden" if hide }'>" + link_to(tab[:label], path, :class => class_name) + "</li>" if tab[:href]
+
+          if hide
+            tab[:label] += inactive_element
+          end
+
+          if tab[:screenreader]
+            link = "<a href='#{path}' class='#{class_name}' aria-label='#{tab[:screenreader]}'>#{tab[:label]}</a>"
+          else
+            link = "<a href='#{path}' class='#{class_name}'>#{tab[:label]}</a>"
+          end
+
+          html << "<li class='section #{"section-tab-hidden" if hide }'>" + link + "</li>" if tab[:href]
         end
         html << "</ul></nav>"
         html.join("")
@@ -469,9 +336,7 @@ module ApplicationHelper
   def sortable_tabs
     tabs = @context.tabs_available(@current_user, :for_reordering => true, :root_account => @domain_root_account)
     tabs.select do |tab|
-      if (tab[:id] == @context.class::TAB_CHAT rescue false)
-        feature_enabled?(:tinychat)
-      elsif (tab[:id] == @context.class::TAB_COLLABORATIONS rescue false)
+      if (tab[:id] == @context.class::TAB_COLLABORATIONS rescue false)
         Collaboration.any_collaborations_configured?
       elsif (tab[:id] == @context.class::TAB_CONFERENCES rescue false)
         feature_enabled?(:web_conferences)
@@ -479,6 +344,15 @@ module ApplicationHelper
         tab[:id] != (@context.class::TAB_SETTINGS rescue nil)
       end
     end
+  end
+
+  def embedded_chat_quicklaunch_params
+    {
+      user_id: @current_user.id,
+      course_id: @context.id,
+      canvas_url: "#{HostUrl.protocol}://#{HostUrl.default_host}",
+      tool_consumer_instance_guid: @context.root_account.lti_guid
+    }
   end
 
   def embedded_chat_url
@@ -506,15 +380,15 @@ module ApplicationHelper
 
   def active_external_tool_by_id(tool_id)
     # don't use for groups. they don't have account_chain_ids
-    tool = @context.context_external_tools.active.find_by_tool_id(tool_id)
+    tool = @context.context_external_tools.active.where(tool_id: tool_id).first
     return tool if tool
 
     # account_chain_ids is in the order we need to search for tools
     # unfortunately, the db will return an arbitrary one first.
     # so, we pull all the tools (probably will only have one anyway) and look through them here
-    tools = ContextExternalTool.active.where(:context_type => 'Account', :context_id => @context.account_chain_ids, :tool_id => tool_id).all
-    @context.account_chain_ids.each do |account_id|
-      tool = tools.find {|t| t.context_id == account_id}
+    tools = ContextExternalTool.active.where(:context_type => 'Account', :context_id => @context.account_chain, :tool_id => tool_id).all
+    @context.account_chain.each do |account|
+      tool = tools.find {|t| t.context_id == account.id}
       return tool if tool
     end
     nil
@@ -537,8 +411,9 @@ module ApplicationHelper
     !!@equella_settings
   end
 
-  def show_user_create_course_button(user)
-    @domain_root_account.manually_created_courses_account.grants_rights?(user, session, :create_courses, :manage_courses).values.any?
+  def show_user_create_course_button(user, account=nil)
+    return true if account && account.grants_any_right?(user, session, :create_courses, :manage_courses)
+    @domain_root_account.manually_created_courses_account.grants_any_right?(user, session, :create_courses, :manage_courses)
   end
 
   # Public: Create HTML for a sidebar button w/ icon.
@@ -579,34 +454,35 @@ module ApplicationHelper
   def inst_env
     global_inst_object = { :environment =>  Rails.env }
     {
-      :allowMediaComments       => Kaltura::ClientV3.config && @context.try_rescue(:allow_media_comments?),
-      :kalturaSettings          => Kaltura::ClientV3.config.try(:slice, 'domain', 'resource_domain', 'rtmp_domain', 'partner_id', 'subpartner_id', 'player_ui_conf', 'player_cache_st', 'kcw_ui_conf', 'upload_ui_conf', 'max_file_size_bytes', 'do_analytics'),
+      :allowMediaComments       => CanvasKaltura::ClientV3.config && @context.try_rescue(:allow_media_comments?),
+      :kalturaSettings          => CanvasKaltura::ClientV3.config.try(:slice, 'domain', 'resource_domain', 'rtmp_domain', 'partner_id', 'subpartner_id', 'player_ui_conf', 'player_cache_st', 'kcw_ui_conf', 'upload_ui_conf', 'max_file_size_bytes', 'do_analytics', 'use_alt_record_widget', 'hide_rte_button', 'js_uploader'),
       :equellaEnabled           => !!equella_enabled?,
-      :googleAnalyticsAccount   => Setting.get_cached('google_analytics_key', nil),
+      :googleAnalyticsAccount   => Setting.get('google_analytics_key', nil),
       :http_status              => @status,
       :error_id                 => @error && @error.id,
       :disableGooglePreviews    => !service_enabled?(:google_docs_previews),
       :disableScribdPreviews    => !feature_enabled?(:scribd),
       :disableCrocodocPreviews  => !feature_enabled?(:crocodoc),
+      :enableScribdHtml5        => feature_enabled?(:scribd_html5),
+      :enableHtml5FirstVideos   => @domain_root_account.feature_enabled?(:html5_first_videos),
       :logPageViews             => !@body_class_no_headers,
       :maxVisibleEditorButtons  => 3,
       :editorButtons            => editor_buttons,
+      :pandaPubSettings        => CanvasPandaPub::Client.config.try(:slice, 'push_url', 'application_id'),
     }.each do |key,value|
       # dont worry about keys that are nil or false because in javascript: if (INST.featureThatIsUndefined ) { //won't happen }
       global_inst_object[key] = value if value
     end
+
     global_inst_object
   end
 
   def editor_buttons
-    tools = []
-    contexts = []
-    contexts << @context if @context && @context.respond_to?(:context_external_tools)
-    contexts += @context.account_chain if @context.respond_to?(:account_chain)
-    contexts << @domain_root_account if @domain_root_account
+    contexts = ContextExternalTool.contexts_to_search(@context)
     return [] if contexts.empty?
     Rails.cache.fetch((['editor_buttons_for'] + contexts.uniq).cache_key) do
-      tools = ContextExternalTool.active.having_setting('editor_button').where(contexts.map{|context| "(context_type='#{context.class.base_class.to_s}' AND context_id=#{context.id})"}.join(" OR "))
+      tools = ContextExternalTool.shard(@context.shard).active.
+          having_setting('editor_button').polymorphic_where(context: contexts)
       tools.sort_by(&:id).map do |tool|
         {
           :name => tool.label_for(:editor_button, nil),
@@ -697,12 +573,6 @@ module ApplicationHelper
     concat(t(*args))
   end
 
-  def jt(key, default, js_options='{}')
-    full_key = key =~ /\A#/ ? key.sub(/\A#/, '') : i18n_scope + '.' + key
-    translated_default = I18n.backend.send(:lookup, I18n.locale, full_key) || default # string or hash
-    raw "I18n.scoped(#{i18n_scope.to_json}).t(#{key.to_json}, #{translated_default.to_json}, #{js_options})"
-  end
-
   def join_title(*parts)
     parts.join(t('#title_separator', ': '))
   end
@@ -718,10 +588,11 @@ module ApplicationHelper
   def map_courses_for_menu(courses)
     mapped = courses.map do |course|
       term = course.enrollment_term.name if !course.enrollment_term.default_term?
+      role = Role.get_role_by_id(course.primary_enrollment_role_id) || Enrollment.get_built_in_role_for_type(course.primary_enrollment_type)
       subtitle = (course.primary_enrollment_state == 'invited' ?
                   before_label('#shared.menu_enrollment.labels.invited_as', 'Invited as') :
                   before_label('#shared.menu_enrollment.labels.enrolled_as', "Enrolled as")
-                 ) + " " + Enrollment.readable_type(course.primary_enrollment)
+                 ) + " " + role.label
       {
         :longName => "#{course.name} - #{course.short_name}",
         :shortName => course.name,
@@ -744,7 +615,7 @@ module ApplicationHelper
       :collection_size        => all_courses_count,
       :more_link_for_over_max => courses_path,
       :title                  => t('#menu.my_courses', "My Courses"),
-      :link_text              => raw(t('#layouts.menu.view_all_enrollments', 'View all courses')),
+      :link_text              => t('#layouts.menu.view_all_or_customize', 'View All or Customize'),
       :edit                   => t("#menu.customize", "Customize")
     }
   end
@@ -757,7 +628,7 @@ module ApplicationHelper
       :max_to_show => 8,
       :more_link_for_over_max => groups_path,
       :title => t('#menu.current_groups', "Current Groups"),
-      :link_text => raw(t('#layouts.menu.view_all_groups', 'View all groups'))
+      :link_text => t('#layouts.menu.view_all_groups', 'View all groups')
     }
   end
 
@@ -769,18 +640,8 @@ module ApplicationHelper
       :max_to_show => 8,
       :more_link_for_over_max => accounts_path,
       :title => t('#menu.managed_accounts', "Managed Accounts"),
-      :link_text => raw(t('#layouts.menu.view_all_accounts', 'View all accounts'))
+      :link_text => t('#layouts.menu.view_all_accounts', 'View all accounts')
     }
-  end
-
-  def show_home_menu?
-    @current_user.set_menu_data(session[:enrollment_uuid])
-    [
-      @current_user.menu_courses(session[:enrollment_uuid]),
-      @current_user.accounts,
-      @current_user.cached_current_group_memberships,
-      @current_user.enrollments.ended
-    ].any?{ |e| e.respond_to?(:count) && e.count > 0 }
   end
 
   def cache_if(cond, *args)
@@ -793,7 +654,7 @@ module ApplicationHelper
 
   def help_link
     url = ((@domain_root_account && @domain_root_account.settings[:support_url]) || (Account.default && Account.default.settings[:support_url]))
-    show_feedback_link = Setting.get_cached("show_feedback_link", "false") == "true"
+    show_feedback_link = Setting.get("show_feedback_link", "false") == "true"
     css_classes = []
     css_classes << "support_url" if url
     css_classes << "help_dialog_trigger" if show_feedback_link
@@ -873,7 +734,7 @@ module ApplicationHelper
   end
 
   def include_account_css
-    return if params[:global_includes] == '0'
+    return if params[:global_includes] == '0' || @domain_root_account.try(:feature_enabled?, :use_new_styles)
     includes = get_global_includes.inject([]) do |css_includes, global_include|
       css_includes << global_include[:css] if global_include[:css].present?
       css_includes
@@ -885,12 +746,51 @@ module ApplicationHelper
   end
 
   # this should be the same as friendlyDatetime in handlebars_helpers.coffee
-  def friendly_datetime(datetime, opts={})
-    attributes = { :title => datetime }
+  def friendly_datetime(datetime, opts={}, attributes={})
     attributes[:pubdate] = true if opts[:pubdate]
-    content_tag(:time, attributes) do
+    context = opts[:context]
+    tag_type = opts.fetch(:tag_type, :time)
+    if datetime.present?
+      attributes['data-html-tooltip-title'] ||= context_sensitive_datetime_title(datetime, context, just_text: true)
+      attributes['data-tooltip'] ||= 'top'
+    end
+
+    content_tag(tag_type, attributes) do
       datetime_string(datetime)
     end
+  end
+
+  def context_sensitive_datetime_title(datetime, context, options={})
+    just_text = options.fetch(:just_text, false)
+    default_text = options.fetch(:default_text, "")
+    return default_text unless datetime.present?
+    local_time = datetime_string(datetime)
+    text = local_time
+    if context.present?
+      course_time = datetime_string(datetime, :event, nil, false, context.time_zone)
+      if course_time != local_time
+        text = "#{h I18n.t('#helpers.local', "Local")}: #{h local_time}<br>#{h I18n.t('#helpers.course', "Course")}: #{h course_time}".html_safe
+      end
+    end
+
+    return text if just_text
+    "data-tooltip data-html-tooltip-title=\"#{text}\"".html_safe
+  end
+
+  # used for generating a
+  # prompt for use with date pickers
+  # so it doesn't need to be declared all over the place
+  def datepicker_screenreader_prompt
+    prompt_text = I18n.t("#helpers.accessible_date_prompt", "Format Like")
+    format = accessible_date_format
+    "#{prompt_text} #{format}"
+  end
+
+  # useful for presenting a consistent
+  # date format to screenreader users across the app
+  # when telling them how to fill in a datetime field
+  def accessible_date_format
+    I18n.t("#helpers.accessible_date_format", "YYYY-MM-DD hh:mm")
   end
 
   # render a link with a tooltip containing a summary of due dates
@@ -939,9 +839,36 @@ module ApplicationHelper
     t("#user.registration.agree_to_terms_and_privacy_policy",
       "You agree to the *terms of use* and acknowledge the **privacy policy**.",
       wrapper: {
-        '*' => link_to('\1', @domain_root_account.terms_of_use_url, target: '_blank'),
-        '**' => link_to('\1', @domain_root_account.privacy_policy_url, target: '_blank')
+        '*' => link_to('\1', terms_of_use_url, target: '_blank'),
+        '**' => link_to('\1', privacy_policy_url, target: '_blank')
       }
     )
+  end
+
+  def dashboard_url(opts={})
+    return super(opts) if opts[:login_success] || opts[:become_user_id]
+    custom_dashboard_url || super(opts)
+  end
+
+  def dashboard_path(opts={})
+    return super(opts) if opts[:login_success] || opts[:become_user_id]
+    custom_dashboard_url || super(opts)
+  end
+
+  def custom_dashboard_url
+    url = @domain_root_account.settings[:dashboard_url]
+    if url.present?
+      url += "?current_user_id=#{@current_user.id}" if @current_user
+      url
+    end
+  end
+
+  def include_custom_meta_tags
+    if @meta_tags.present?
+      @meta_tags.
+        map{ |meta_attrs| tag("meta", meta_attrs) }.
+        join("\n").
+        html_safe
+    end
   end
 end

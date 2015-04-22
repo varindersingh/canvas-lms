@@ -2,19 +2,20 @@ define [
   'i18n!gradebook2'
   'jquery'
   'jst/CurveGradesDialog'
+  'str/htmlEscape'
   'jquery.disableWhileLoading'
   'jquery.instructure_forms'
   'jqueryui/dialog'
   'jquery.instructure_misc_plugins'
   'compiled/jquery/fixDialogButtons'
   'vendor/jquery.ba-tinypubsub'
-], (I18n, $, curveGradesDialogTemplate) ->
+], (I18n, $, curveGradesDialogTemplate, htmlEscape) ->
 
   class CurveGradesDialog
-    constructor: (@assignment, @gradebook) ->
+    constructor: ({@assignment, @students, context_url}) ->
       locals =
         assignment: @assignment
-        action: "#{@gradebook.options.context_url}/gradebook/update_submission"
+        action: "#{context_url}/gradebook/update_submission"
         middleScore: parseInt((@assignment.points_possible || 0) * 0.6)
         showOutOf: @assignment.points_possible >= 0
       # the dialog will be shared across all instantiation, so make it a prototype property
@@ -23,13 +24,21 @@ define [
         .formSubmit
           disableWhileLoading: true
           processData: (data) =>
+            if !@assignment.points_possible || @assignment.points_possible == "0"
+              errorBox = @$dialog.errorBox I18n.t("errors.no_points_possible", "Cannot curve without points possible")
+              setTimeout((-> errorBox.fadeOut(-> errorBox.remove())), 3500)
+              return false
             cnt = 0
             curves = @curve()
             for idx of curves
               pre = "submissions[submission_" + idx + "]"
               data[pre + "[assignment_id]"] = data.assignment_id
               data[pre + "[user_id]"] = idx
-              data[pre + "[grade]"] = curves[idx]
+              if @assignment.grading_type == "gpa_scale"
+                percent = (curves[idx]/@assignment.points_possible)*100
+                data[pre + "[grade]"] = "#{percent}%"
+              else
+                data[pre + "[grade]"] = curves[idx]
               cnt++
             if cnt == 0
               errorBox = @$dialog.errorBox I18n.t("errors.none_to_update", "None to Update")
@@ -42,6 +51,7 @@ define [
             submissions = (datum.submission for datum in data)
             $.publish 'submissions_updated', [submissions]
             alert I18n.t("alerts.scores_updated", { one: "1 Student score updated", other: "%{count} Student scores updated"}, count: data.length)
+            $("#set_default_grade").focus()
         .dialog
           width: 350
           modal: true
@@ -65,8 +75,9 @@ define [
 
       return  if isNaN(middleScore)
 
-      for idx, student of @gradebook.students
-        score = student["assignment_#{@assignment.id}"].score
+      for idx, student of @students
+        sub = student["assignment_#{@assignment.id}"]
+        score = sub?.score
         score = @assignment.points_possible if score > @assignment.points_possible
         score = 0 if score < 0 or !score? and should_assign_blanks
         users_for_score[parseInt(score, 10)] = users_for_score[parseInt(score, 10)] or []
@@ -94,8 +105,7 @@ define [
       while idx >= 0
         users = users_for_score[idx] or []
         score = Math.round(breakScores[currentBreak])
-        for jdx of users
-          user = users[jdx]
+        for user in users
           finalScores[user[0]] = score
           finalScores[user[0]] = 0  if user[1] == 0
           finalScore = finalScores[user[0]]
@@ -124,13 +134,13 @@ define [
           if users
             pct = (users.length / maxCount)
             cnt = users.length
-          color = (if idx == 0 then "#ee8" else "#cdf")
-          $("#results_list").prepend "<td style='padding: 1px;'><div title='" + cnt + " student" + (if cnt == 1 then "" else "s") + " will get " + idx + " points' style='border: 1px solid #888; background-color: " + color + "; width: " + width + "px; height: " + (100 * pct) + "px; margin-top: " + (100 * (1 - pct)) + "px;'>&nbsp;</div></td>"
-          $("#results_values").prepend "<td style='text-align: center;'>" + idx + "</td>"
+          color = (if idx == 0 then "#a03536" else "#007ab8")
+          $("#results_list").prepend "<td style='padding: 1px;'><div title='" + htmlEscape(I18n.t({one: "1 student will get %{num} points", other: "%{count} students will get %{num} points"}, {count: cnt, num: idx})) + "' style='border: 1px solid #888; background-color: " + htmlEscape(color) + "; width: " + htmlEscape(width) + "px; height: " + htmlEscape(100 * pct) + "px; margin-top: " + htmlEscape(100 * (1 - pct)) + "px;'>&nbsp;</div></td>"
+          $("#results_values").prepend "<td style='text-align: center;'>" + htmlEscape(idx) + "</td>"
           skipCount = 0
         else
           skipCount++
         idx--
-      $("#results_list").prepend "<td><div style='height: 100px; position: relative; width: 30px; font-size: 0.8em;'><img src='/images/number_of_students.png' alt='# of students'/><div style='position: absolute; top: 0; right: 3px;'>" + maxCount + "</div><div style='position: absolute; bottom: 0; right: 3px;'>0</div></div></td>"
+      $("#results_list").prepend "<td><div style='height: 100px; position: relative; width: 30px; font-size: 0.8em;'><img src='/images/number_of_students.png' alt='" + htmlEscape(I18n.t("# of students")) + "'/><div style='position: absolute; top: 0; right: 3px;'>" + htmlEscape(maxCount) + "</div><div style='position: absolute; bottom: 0; right: 3px;'>0</div></div></td>"
       $("#results_values").prepend "<td>&nbsp;</td>"
       finalScores

@@ -21,7 +21,7 @@ require 'db/migrate/20120106220543_set_saml_entity_id'
 
 describe 'SetSamlEntityId' do
   before(:each) do
-    Setting.set_config('saml', {
+    ConfigFile.stub('saml', {
             :entity_id => "http://watup_fool.com/saml2"
     })
     HostUrl.stubs(:default_host).returns('bob.cody.instructure.com')
@@ -34,7 +34,7 @@ describe 'SetSamlEntityId' do
   it "should set the entity_id to the current setting if none is set" do
     SetSamlEntityId.up
     @aac.reload
-    @aac.entity_id.should == "http://watup_fool.com/saml2"
+    expect(@aac.entity_id).to eq "http://watup_fool.com/saml2"
   end
   
   it "should leave the entity_id the same if already set" do
@@ -44,18 +44,18 @@ describe 'SetSamlEntityId' do
     SetSamlEntityId.up
     
     @aac.reload
-    @aac.entity_id.should == "haha"
+    expect(@aac.entity_id).to eq "haha"
   end
   
   it "should use the account's domain if no config is set" do
-    Setting.set_config('saml', {
+    ConfigFile.stub('saml', {
             :entity_id => nil
     })
 
     SetSamlEntityId.up
 
     @aac.reload
-    @aac.entity_id.should == "http://bob.cody.instructure.com/saml2"
+    expect(@aac.entity_id).to eq "http://bob.cody.instructure.com/saml2"
   end
   
   

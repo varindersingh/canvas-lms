@@ -1,10 +1,11 @@
 define [
   'Backbone'
+  'jquery'
   'underscore'
   'str/htmlEscape'
   'jst/FindFlickrImageView'
   'jst/FindFlickrImageResult'
-], (Backbone, _, h, template, resultTemplate) ->
+], (Backbone, $, _, h, template, resultTemplate) ->
 
   class FindFlickrImageView extends Backbone.View
 
@@ -43,5 +44,6 @@ define [
           fullsize: "https://farm#{photo.farm}.static.flickr.com/#{photo.server}/#{photo.id}_#{photo.secret}.jpg"
           source:   "https://secure.flickr.com/photos/#{photo.owner}/#{photo.id}"
           title:    photo.title
+      html = html.join('')
 
-      @$('.flickrResults').showIf(!!photos.length).html html.join('')
+      @$('.flickrResults').showIf(!!photos.length).html html

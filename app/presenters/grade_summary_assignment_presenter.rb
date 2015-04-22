@@ -9,7 +9,8 @@ class GradeSummaryAssignmentPresenter
   end
 
   def hide_distribution_graphs?
-    submissions.length < 5 || assignment.context.hide_distribution_graphs?
+    submission_count = @summary.submission_counts[assignment.id] || 0
+    submission_count < 5 || assignment.context.hide_distribution_graphs?
   end
 
   def is_unread?
@@ -22,6 +23,14 @@ class GradeSummaryAssignmentPresenter
 
   def is_letter_graded?
     assignment.grading_type == 'letter_grade'
+  end
+
+  def is_gpa_scaled?
+    assignment.grading_type == 'gpa_scale'
+  end
+
+  def is_letter_graded_or_gpa_scaled?
+    is_letter_graded? || is_gpa_scaled?
   end
 
   def is_assignment?
@@ -68,24 +77,12 @@ class GradeSummaryAssignmentPresenter
     !assignment.special_class && (has_comments? || has_scoring_details?)
   end
 
-  def hide_max_scores?
-    assignment && assignment.hide_max_scores_for_assignments
-  end
-
-  def hide_min_scores?
-    assignment && assignment.hide_min_scores_for_assignments
-  end
-
-  def show_all_scores?
-    assignment && !hide_max_scores? && !hide_min_scores?
-  end
-
   def special_class
     assignment.special_class ? ("hard_coded " + assignment.special_class) : "editable"
   end
 
   def published_grade
-    is_letter_graded? ? "(#{submission.published_grade})" : ''
+    is_letter_graded_or_gpa_scaled? ? "(#{submission.published_grade})" : ''
   end
 
   def display_score
@@ -98,7 +95,7 @@ class GradeSummaryAssignmentPresenter
 
   def turnitin
     t = if is_text_entry?
-      submission.turnitin_data && submission.turnitin_data[submission.asset_string]
+      submission.turnitin_data[submission.asset_string]
     elsif is_online_upload? && file
       submission.turnitin_data[file.asset_string]
     else
@@ -108,7 +105,11 @@ class GradeSummaryAssignmentPresenter
   end
 
   def grade_distribution
-    @grade_distribution ||= assignment.grade_distribution(submissions)
+    @grade_distribution ||= begin
+      if stats = @summary.assignment_stats[assignment.id]
+        [stats.max, stats.min, stats.avg].map { |stat| stat.to_f.round(1) }
+      end
+    end
   end
 
   def graph
@@ -123,10 +124,6 @@ class GradeSummaryAssignmentPresenter
     @file ||= submission.attachments.detect{|a| submission.turnitin_data && submission.turnitin_data[a.asset_string] }
   end
 
-  def submissions
-    @submissions ||= @summary.submissions_by_assignment[assignment.id] || []
-  end
-
   def comments
     submission.visible_submission_comments
   end
@@ -134,8 +131,8 @@ class GradeSummaryAssignmentPresenter
   def rubric_assessments
     @visible_rubric_assessments ||= begin
       if submission && !assignment.muted?
-        assessments = submission.rubric_assessments.select { |a| a.grants_rights?(@current_user, :read)[:read] }
-        assessments.sort_by { |a| [a.assessment_type == 'grading' ? SortFirst : SortLast, a.assessor_name] }
+        assessments = submission.rubric_assessments.select { |a| a.grants_right?(@current_user, :read) }
+        assessments.sort_by { |a| [a.assessment_type == 'grading' ? CanvasSort::First : CanvasSort::Last, a.assessor_name] }
       else
         []
       end
@@ -144,6 +141,10 @@ class GradeSummaryAssignmentPresenter
 
   def group
     @group ||= assignment && assignment.assignment_group
+  end
+
+  def viewing_fake_student?
+    @summary.student_enrollment.fake_student?
   end
 end
 
@@ -189,6 +190,12 @@ class GradeSummaryGraph
 
   def score_left
     pixels_for(@score) - 5
+  end
+
+  def title
+    I18n.t('#grade_summary.graph_title', "Mean %{mean}, High %{high}, Low %{low}", {
+      mean: @mean.to_s, high: @high.to_s, low: @low.to_s
+    })
   end
 
   private

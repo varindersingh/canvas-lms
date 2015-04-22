@@ -1,13 +1,13 @@
 define [
-  'i18n!overrides'
   'Backbone'
   'underscore'
   'jst/assignments/DueDateView'
+  'compiled/util/DateValidator'
   'jquery'
   'jquery.toJSON'
   'jquery.instructure_date_and_time'
   'jquery.instructure_forms'
-], (I18n,Backbone, _, template, $) ->
+], (Backbone, _, template, DateValidator, $) ->
   class DueDateView extends Backbone.View
     template: template
     tagName: 'li'
@@ -15,7 +15,7 @@ define [
 
     events:
       'click .remove-link' : 'removeDueDate'
-    
+
     # Method Summary
     #  Apply bindings and calendar js to each view
     afterRender: =>
@@ -45,7 +45,6 @@ define [
       json = @$el.find('form').toJSON()
       for dateField in [ 'due_at', 'lock_at', 'unlock_at' ]
         json[dateField] = $.unfudgeDateForProfileTimezone(json[dateField])
-      json.course_section_id = parseInt(json.course_section_id, 10)
       errs = @validateBeforeSave json, {}
       @$el.hideErrors()
       for own el, msg of errs.assignmentOverrides
@@ -53,21 +52,14 @@ define [
       json
 
     validateBeforeSave: (data, errors) =>
-      errs = {}
-      if data
-          lockAt = data.lock_at
-          unlockAt = data.unlock_at
-          dueAt = data.due_at
-          if lockAt && dueAt && lockAt < dueAt
-            errs.lock_at = I18n.t('lock_date_before_due_date',
-              'Lock date cannot be before due date')
-          if unlockAt && dueAt && unlockAt > dueAt
-            errs.unlock_at = I18n.t('unlock_date_after_due_date',
-              'Unlock date cannot be after due date')
-          else if unlockAt && lockAt && unlockAt > lockAt
-            errs.unlock_at = I18n.t('unlock_date_after_lock_date',
-              'Unlock date cannot be after lock date')
-      errors['assignmentOverrides'] = errs if _.keys(errs).length > 0
+      return errors unless data
+
+      dateRange = $.extend({},ENV.VALID_DATE_RANGE)
+
+      dateValidator = new DateValidator({date_range: dateRange, data: data})
+
+      errs = dateValidator.validateDates()
+      errors['assignmentOverrides'] = errs if !_.isEmpty(errs)
       errors
 
     updateOverride: =>

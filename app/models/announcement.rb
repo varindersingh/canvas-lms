@@ -17,23 +17,37 @@
 #
 
 class Announcement < DiscussionTopic
-  
+
   belongs_to :context, :polymorphic => true
-  
+  validates_inclusion_of :context_type, :allow_nil => true, :in => ['Course', 'Group']
+
+  EXPORTABLE_ATTRIBUTES = [
+    :id, :context_id, :context_type, :title, :message, :type, :user_id,
+    :workflow_state, :last_reply_at, :created_at, :updated_at, :delayed_post_at, :posted_at,
+    :assignment_id, :attachment_id, :deleted_at, :root_topic_id, :could_be_locked, :cloned_item_id,
+    :context_code, :position, :subtopics_refreshed_at, :old_assignment_id, :last_assignment_id, :external_feed_id,
+    :editor_id, :podcast_enabled, :podcast_has_student_posts, :require_initial_post, :discussion_type, :lock_at, :pinned, :locked
+  ]
+
+  EXPORTABLE_ASSOCIATIONS = [:context]
+
   has_a_broadcast_policy
   include HasContentTags
-  
-  sanitize_field :message, Instructure::SanitizeField::SANITIZE
-  
+
+  sanitize_field :message, CanvasSanitize::SANITIZE
+
   before_save :infer_content
   before_save :respect_context_lock_rules
   validates_presence_of :context_id
   validates_presence_of :context_type
   validates_presence_of :message
 
-  acts_as_list scope: %q{context_id = '#{context_id}' AND
-                         context_type = '#{context_type}' AND
-                         type = 'Announcement'}
+  acts_as_list scope: { context: self, type: 'Announcement' }
+
+  def validate_draft_state_change
+    old_draft_state, new_draft_state = self.changes['workflow_state']
+    self.errors.add :workflow_state, I18n.t('#announcements.error_draft_state', "This topic cannot be set to draft state because it is an announcement.") if new_draft_state == 'unpublished'
+  end
 
   def infer_content
     self.title ||= t(:no_title, "No Title")
@@ -52,7 +66,16 @@ class Announcement < DiscussionTopic
     to { active_participants(true) - [user] }
     whenever { |record|
       record.context.available? and
-      ((record.just_created and not record.post_delayed?) || record.changed_state(:active, :post_delayed))
+        !record.context.concluded? and
+        ((record.just_created and !(record.post_delayed? || record.unpublished?)) || record.changed_state(:active, :unpublished) || record.changed_state(:active, :post_delayed))
+    }
+
+    dispatch :announcement_created_by_you
+    to { user }
+    whenever { |record|
+      record.context.available? and
+        !record.context.concluded? and
+        ((record.just_created and !(record.post_delayed? || record.unpublished?)) || record.changed_state(:active, :unpublished) || record.changed_state(:active, :post_delayed))
     }
   end
 
@@ -63,10 +86,20 @@ class Announcement < DiscussionTopic
     given { |user| self.user.present? && self.user == user && self.discussion_entries.active.empty? }
     can :delete
 
+    given do |user|
+      self.grants_right?(user, :read) &&
+       (self.context.is_a?(Group) ||
+        (user &&
+         (self.context.grants_right?(user, :read_as_admin) ||
+          (self.context.is_a?(Course) &&
+           self.context.includes_user?(user)))))
+    end
+    can :read_replies
+
     given { |user, session| self.context.grants_right?(user, session, :read) }
     can :read
 
-    given { |user, session| self.context.grants_right?(user, session, :post_to_forum) }
+    given { |user, session| self.context.grants_right?(user, session, :post_to_forum) && !self.locked?}
     can :reply
 
     given { |user, session| self.context.is_a?(Group) && self.context.grants_right?(user, session, :post_to_forum) }
@@ -85,5 +118,13 @@ class Announcement < DiscussionTopic
 
   def subscription_hold(user, context_enrollment, session)
     :topic_is_announcement
+  end
+
+  def can_unpublish?(opts=nil)
+    false
+  end
+
+  def published?
+    true
   end
 end

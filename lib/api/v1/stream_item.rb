@@ -18,7 +18,6 @@
 
 module Api::V1::StreamItem
   include Api::V1::Context
-  include Api::V1::Collection
   include Api::V1::Submission
 
   def stream_item_json(stream_item_instance, stream_item, current_user, session)
@@ -41,14 +40,8 @@ module Api::V1::StreamItem
         context = stream_item.asset.context
         hash['message'] = api_user_content(data.message, context)
         if stream_item.data.class.name == 'DiscussionTopic'
-          if context_type == "collection_item"
-            # TODO: build the html_url for the collection item (we want to send them
-            # there instead of directly to the discussion.)
-            # These html routes aren't enabled yet, so we can't build them here yet.
-          else
-            hash['discussion_topic_id'] = stream_item.asset_id
-            hash['html_url'] = send("#{context_type}_discussion_topic_url", context_id, stream_item.asset_id)
-          end
+          hash['discussion_topic_id'] = stream_item.asset_id
+          hash['html_url'] = send("#{context_type}_discussion_topic_url", context_id, stream_item.asset_id)
         else
           hash['announcement_id'] = stream_item.asset_id
           hash['html_url'] = send("#{context_type}_announcement_url", context_id, stream_item.asset_id)
@@ -84,6 +77,7 @@ module Api::V1::StreamItem
         json = submission_json(stream_item.asset, stream_item.asset.assignment, current_user, session, nil, ['submission_comments', 'assignment', 'course', 'html_url', 'user'])
         json.delete('id')
         hash.merge! json
+        hash['submission_id'] = stream_item.asset.id
 
         # backwards compat from before using submission_json
         hash['assignment']['title'] = hash['assignment']['name']
@@ -99,28 +93,34 @@ module Api::V1::StreamItem
         # TODO: this type isn't even shown on the web activity stream yet
         hash['type'] = 'Collaboration'
         hash['html_url'] = send("#{context_type}_collaboration_url", context_id, stream_item.asset_id) if context_type
-      when "CollectionItem"
-        item = stream_item.asset
-        hash['title'] = item.data.title
-        hash['message'] = item.data.description
-        hash['collection_item'] = collection_items_json([item], current_user, session).first
+      when /AssessmentRequest/
+        assessment_request = stream_item.asset
+        assignment = assessment_request.asset.assignment
+        hash['assessment_request_id'] = assessment_request.id
+        hash['html_url'] = course_assignment_submission_url(assignment.context_id, assignment.id, assessment_request.user_id)
+        hash['title'] = I18n.t("stream_items_api.assessment_request_title", 'Peer Review for %{title}', title: assignment.title)
       else
         raise("Unexpected stream item type: #{stream_item.asset_type}")
       end
     end
   end
 
-  def api_render_stream_for_contexts(contexts, paginate_url)
-    # for backwards compatibility, since this api used to be hard-coded to return 21 items
-    params[:per_page] ||= 21
-    opts = {}
-    opts[:contexts] = contexts if contexts.present?
-
+  def api_render_stream(opts)
     items = @current_user.shard.activate do
       scope = @current_user.visible_stream_item_instances(opts).includes(:stream_item)
-      Api.paginate(scope, self, self.send(paginate_url, @context)).to_a
+      scope = scope.joins(:stream_item).where("stream_items.asset_type=?", opts[:asset_type]) if opts.has_key?(:asset_type)
+      if opts.has_key?(:submission_user_id) || opts[:asset_type] == 'Submission'
+        scope = scope.joins('inner join "submissions" on "submissions"."id"="asset_id"')
+        # just because there are comments doesn't mean the user can see them.
+        # we still need to filter after the pagination :(
+        scope = scope.where('"submissions"."submission_comments_count">0')
+        scope = scope.where('"submissions"."user_id"=?', opts[:submission_user_id]) if opts.has_key?(:submission_user_id)
+      end
+      Api.paginate(scope, self, self.send(opts[:paginate_url], @context), default_per_page: 21).to_a
     end
-    render :json => items.select(&:stream_item).map { |i| stream_item_json(i, i.stream_item, @current_user, session) }
+    json = items.select(&:stream_item).map { |i| stream_item_json(i, i.stream_item, @current_user, session) }
+    json.select! {|hash| hash['submission_comments'].present?} if opts[:asset_type] == 'Submission'
+    render :json => json
   end
 
   def api_render_stream_summary(contexts = nil)

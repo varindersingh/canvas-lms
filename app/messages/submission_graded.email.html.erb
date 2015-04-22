@@ -1,9 +1,15 @@
 <% define_content :link do %>
-  <%= HostUrl.protocol %>://<%= HostUrl.context_host(asset.assignment.context) %>/<%= asset.assignment.context.class.to_s.downcase.pluralize %>/<%= asset.assignment.context_id %>/assignments/<%= asset.assignment_id %>
+  <%= polymorphic_url([asset.assignment.context, asset.assignment]) %>
 <% end %>
 
 <% define_content :subject do %>
   <%= t :subject, "Assignment Graded: %{assignment}, %{context}", :assignment => asset.assignment.title, :context => asset.assignment.context.name %>
+<% end %>
+
+<% define_content :footer_link do %>
+  <a href="<%= content(:link) %>">
+    <%= t(:link_message, "You can review the assignment here") %>
+  </a>
 <% end %>
 
 <p><%= t :body, "Your assignment, %{assignment}, has been graded.", :assignment => asset.assignment.title %></p>
@@ -15,5 +21,3 @@
 <% end %>
 
 <p><%= t(:score_pending_review, "score pending review by the teacher") if asset.pending_review? %></p>
-
-<p><a href="<%= content :link %>"><%= t(:link_message, "You can review the assignment here") %></a></p>

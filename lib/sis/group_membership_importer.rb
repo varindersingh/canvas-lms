@@ -21,7 +21,7 @@ module SIS
 
     def process
       start = Time.now
-      importer = Work.new(@batch_id, @root_account, @logger)
+      importer = Work.new(@batch, @root_account, @logger)
       yield importer
       @logger.debug("Group Users took #{Time.now - start} seconds")
       return importer.success_count
@@ -31,8 +31,8 @@ module SIS
     class Work
       attr_accessor :success_count
 
-      def initialize(batch_id, root_account, logger)
-        @batch_id = batch_id
+      def initialize(batch, root_account, logger)
+        @batch = batch
         @root_account = root_account
         @logger = logger
         @success_count = 0
@@ -47,21 +47,21 @@ module SIS
         raise ImportError, "No user_id given for a group user" if user_id.blank?
         raise ImportError, "Improper status \"#{status}\" for a group user" unless status =~ /\A(accepted|deleted)/i
 
-        pseudo = Pseudonym.find_by_account_id_and_sis_user_id(@root_account.id, user_id)
+        pseudo = @root_account.pseudonyms.where(sis_user_id: user_id).first
         user = pseudo.try(:user)
 
         group = @groups_cache[group_id]
-        group ||= Group.find_by_root_account_id_and_sis_source_id(@root_account.id, group_id)
+        group ||= @root_account.all_groups.where(sis_source_id: group_id).first
         @groups_cache[group.sis_source_id] = group if group
 
         raise ImportError, "User #{user_id} didn't exist for group user" unless user
         raise ImportError, "Group #{group_id} didn't exist for group user" unless group
 
         # can't query group.group_memberships, since that excludes deleted memberships
-        group_membership = GroupMembership.find_by_group_id_and_user_id(group.id, user.id)
+        group_membership = GroupMembership.where(group_id: group, user_id: user).first
         group_membership ||= group.group_memberships.build(:user => user)
 
-        group_membership.sis_batch_id = @batch_id
+        group_membership.sis_batch_id = @batch.id if @batch
 
         case status
         when /accepted/i

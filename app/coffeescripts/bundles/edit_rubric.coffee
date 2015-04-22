@@ -18,44 +18,19 @@
 
 require [
   'i18n!outcomes'
+  'jquery'
   'compiled/models/OutcomeGroup'
   'compiled/views/outcomes/FindDialog'
-  'compiled/views/outcomes/FindDirectoryView'
+  'compiled/views/rubrics/EditRubricPage'
   'edit_rubric'
-], (I18n, OutcomeGroup, FindDialog, FindDirectoryView, rubricEditing) ->
+], (I18n, $, OutcomeGroup, FindDialog, EditRubricPage, rubricEditing) ->
 
-  class EditRubricPage
-    $els: {}
-
-    translations:
-      findOutcome: I18n.t('titles.find_outcomes', 'Find Outcomes')
-
-    constructor: ->
-      @rootOutcomeGroup = new OutcomeGroup(ENV.ROOT_OUTCOME_GROUP)
-      @cacheElements()
-      @attachEvents()
-
-    cacheElements: ->
-      @$els.rubricWrapper = $('#rubrics')
-      @$els.dialog = new FindDialog
-        title: @translations.findOutcome
-        selectedGroup: @rootOutcomeGroup
-        useForScoring: true
-        shouldImport: false
-        disableGroupImport: true
-        rootOutcomeGroup: @rootOutcomeGroup
-
-    attachEvents: ->
-      @$els.rubricWrapper.on('click', 'a.find_outcome_link', @onFindOutcome)
-      @$els.dialog.on('import', @onOutcomeImport)
-
-    onFindOutcome: (e) =>
-      e.preventDefault()
-      @$els.dialog.show()
-
-    onOutcomeImport: (model) ->
-      rubricEditing.onFindOutcome(model)
-
-  $(document).ready ->
+  initEditRubricPage = ->
     new EditRubricPage
     rubricEditing.init()
+
+  if $.isReady
+    initEditRubricPage()
+  else
+    $(document).ready ->
+      initEditRubricPage()

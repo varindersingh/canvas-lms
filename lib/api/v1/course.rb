@@ -19,13 +19,28 @@
 module Api::V1::Course
   include Api::V1::Json
   include Api::V1::EnrollmentTerm
+  include Api::V1::SectionEnrollments
+  include Api::V1::PostGradesStatus
 
   def course_settings_json(course)
     settings = {}
     settings[:allow_student_discussion_topics] = course.allow_student_discussion_topics?
     settings[:allow_student_forum_attachments] = course.allow_student_forum_attachments?
     settings[:allow_student_discussion_editing] = course.allow_student_discussion_editing?
+    settings[:grading_standard_enabled] = course.grading_standard_enabled?
+    settings[:grading_standard_id] = course.grading_standard_id
+    settings[:allow_student_organized_groups] = course.allow_student_organized_groups?
+    settings[:hide_final_grades] = course.hide_final_grades?
+    settings[:hide_distribution_graphs] = course.hide_distribution_graphs?
+    settings[:lock_all_announcements] = course.lock_all_announcements?
+    settings[:restrict_student_past_view] = course.restrict_student_past_view?
+    settings[:restrict_student_future_view] = course.restrict_student_future_view?
+
     settings
+  end
+
+  def courses_json(courses, user, session, includes, enrollments)
+    courses.map{ |course| course_json(course, user, session, includes, enrollments) }
   end
 
   # Public: Returns a course hash to serialize for a json api request.
@@ -58,14 +73,18 @@ module Api::V1::Course
   def course_json(course, user, session, includes, enrollments)
     Api::V1::CourseJson.to_hash(course, user, includes, enrollments) do |builder, allowed_attributes, methods, permissions_to_include|
       hash = api_json(course, user, session, { :only => allowed_attributes, :methods => methods }, permissions_to_include)
-      hash['term'] = enrollment_term_json(course.enrollment_term, user, session, {}) if includes.include?('term')
+      hash['term'] = enrollment_term_json(course.enrollment_term, user, session, enrollments, []) if includes.include?('term')
+      hash['course_progress'] = CourseProgress.new(course, user).to_json if includes.include?('course_progress')
       hash['apply_assignment_group_weights'] = course.apply_group_weights?
+      hash['sections'] = section_enrollments_json(enrollments) if includes.include?('sections')
+      hash['total_students'] = course.students.count if includes.include?('total_students')
+      hash['passback_status'] = post_grades_status_json(course) if includes.include?('passback_status')
       add_helper_dependant_entries(hash, course, builder)
     end
   end
 
   def copy_status_json(import, course, user, session)
-    hash = api_json(import, user, session, :only => %w(id progress created_at workflow_state))
+    hash = api_json(import, user, session, :only => %w(id progress created_at workflow_state integration_id))
 
     # the type of object for course copy changed but we don't want the api to change
     # so map the workflow states to the old ones

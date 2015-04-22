@@ -22,6 +22,7 @@ require File.expand_path(File.dirname(__FILE__) + '/../views_helper')
 describe "/profile/communication" do
   it "should render" do
     course_with_student
+    communication_channel(@user)
     view_context
 
     assigns[:email_channels] = []
@@ -31,7 +32,7 @@ describe "/profile/communication" do
     assigns[:policies] = NotificationPolicy.for(@user)
     assigns[:user] = @user
     render "profile/communication"
-    response.should_not be_nil
+    expect(response).not_to be_nil
   end
 end
 

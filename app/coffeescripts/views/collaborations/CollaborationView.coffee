@@ -18,11 +18,12 @@
 
 define [
   'i18n!collaborations'
+  'jquery'
   'underscore'
   'Backbone'
   'compiled/views/collaborations/CollaboratorPickerView'
   'jst/collaborations/edit'
-], (I18n, {extend}, {View}, CollaboratorPickerView, editForm) ->
+], (I18n, $, {extend}, {View}, CollaboratorPickerView, editForm) ->
 
   class CollaborationView extends View
     events:
@@ -31,6 +32,7 @@ define [
       'click .cancel_button': 'onCloseForm'
 
     initialize: ->
+      super
       @id = @$el.data('id')
 
     # Internal: Create collaboration edit form HTML.
@@ -42,7 +44,7 @@ define [
     #
     # Returns a jQuery object form.
     formTemplate: ({action, className, data}) ->
-      $form = $(editForm(extend(data, action: action, id: @id, token: ENV.AUTHENTICITY_TOKEN)))
+      $form = $(editForm(extend(data, action: action, id: @id)))
       #$form.attr('class', className)
 
     # Internal: Confirm deleting of a Google Docs collaboration.

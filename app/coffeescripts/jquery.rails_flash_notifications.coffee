@@ -1,29 +1,49 @@
 # does Rails-style flash message/error boxes that drop down from the top of the screen
 define [
   'i18n!shared.flash_notices'
+  'jquery'
   'underscore'
   'compiled/fn/preventDefault'
+  'str/htmlEscape'
   'jqueryui/effects/drop'
   'vendor/jquery.cookie'
-], (I18n, _, preventDefault) ->
+], (I18n, $, _, preventDefault, htmlEscape) ->
+  $holder = []
+  $screenreader_holder = []
 
-  $buffer = $("#flash_message_buffer")
-  $holder = $("#flash_message_holder")
-  $holder.on 'click', '.close_link', preventDefault
-  $holder.on 'click', 'li', ->
-    $this = $(this)
-    return if $this.hasClass('no_close')
-    $.cookie('unsupported_browser_dismissed', '1') if $this.hasClass('unsupported_browser')
-    $this.stop(true, true).remove()
-    if (bufferIndex = $this.data('buffer-index'))?
-      $buffer.find("[data-buffer-index=#{bufferIndex}]").remove()
+  initFlashContainer = ->
+    $holder = $("#flash_message_holder")
+    return if $holder.length == 0 # not defined yet; call $.initFlashContainer later
+    $screenreader_holder = $("#flash_screenreader_holder")
+    $holder.on 'click', '.close_link', preventDefault(->)
+    $holder.on 'click', 'li', ->
+      $this = $(this)
+      return if $this.hasClass('no_close')
+      $.cookie('unsupported_browser_dismissed', '1') if $this.hasClass('unsupported_browser')
+      $this.stop(true, true).remove()
+  initFlashContainer() # look for the container on script load
+
+  ###
+  xsslint safeString.function escapeContent
+  ###
+  escapeContent = (content) ->
+    if content.hasOwnProperty('html') then content.html else htmlEscape(content)
+
+  screenReaderFlashBox = (type, content) ->
+    $screenreader_node = $("""
+      <span>#{escapeContent(content)}</span>
+    """)
+
+    $screenreader_node.appendTo($screenreader_holder)
+    # By not removing these in a timely manner, they can stack up and become repetitive
+    window.setTimeout((-> $screenreader_node.remove()), 1000)
 
   flashBox = (type, content, timeout, cssOptions = {}) ->
     $node = $("""
-      <li class="ic-flash-#{type}" role="alert">
+      <li class="ic-flash-#{htmlEscape(type)}">
         <i></i>
-        #{content}
-        <a href="#" class="close_link icon-end">#{I18n.t("close", "Close")}</a>
+        #{escapeContent(content)}
+        <a href="#" class="close_link icon-end">#{htmlEscape I18n.t("close", "Close")}</a>
       </li>
     """)
 
@@ -33,7 +53,9 @@ define [
       delay(timeout || 7000).
       animate({'z-index': 1}, 0).
       fadeOut('slow', -> $(this).slideUp('fast', -> $(this).remove()))
-  
+
+    setTimeout((-> screenReaderFlashBox(type, content)), 100)
+
   # Pops up a small notification box at the top of the screen.
   $.flashMessage = (content, timeout = 3000) ->
     flashBox("success", content, timeout)
@@ -42,8 +64,32 @@ define [
   $.flashError = (content, timeout) ->
     flashBox("error", content, timeout)
 
-  $.screenReaderFlashMessage = (content, timeout = 3000) ->
-    flashBox('success', content, timeout, position: 'absolute', left: -10000)
+  # Pops up a small warning box at the top of the screen.
+  $.flashWarning = (content, timeout = 3000) ->
+    flashBox("warning", content, timeout)
 
-  $.screenReaderFlashError = (content, timeout = 3000) ->
-    flashBox('error', content, timeout, position: 'absolute', left: -10000)
+  $.screenReaderFlashMessage = (content) ->
+    screenReaderFlashBox('success', content)
+
+  $.screenReaderFlashError = (content) ->
+    screenReaderFlashBox('error', content)
+
+  # This is for when you want to clear the flash message content prior to
+  # updating it with new content.  Makes it so the SR only reads this one
+  # message.
+  $.screenReaderFlashMessageExclusive = (content) ->
+    $screenreader_holder.html("""
+      <span>#{escapeContent(content)}</span>
+    """)
+
+  $.initFlashContainer = ->
+    initFlashContainer()
+
+  renderServerNotifications = ->
+    if ENV.notices?
+      for notice in ENV.notices
+        flashBox(notice.type, notice.content)
+
+  $ ->
+    setTimeout(renderServerNotifications, 500)
+

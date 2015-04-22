@@ -22,9 +22,10 @@ describe Progress do
   describe '#process_job' do
     class Jerbs
       cattr_accessor :flag
+      extend RSpec::Matchers
 
       def self.succeed(progress, flag)
-        progress.state.should == :running
+        expect(progress.state).to eq :running
         self.flag = flag
       end
 
@@ -39,17 +40,33 @@ describe Progress do
 
     it "should update the progress while running the job" do
       progress.process_job(Jerbs, :succeed, {}, :flag)
-      progress.should be_queued
+      expect(progress).to be_queued
       run_jobs
-      progress.reload.should be_completed
-      progress.completion.should == 100
-      Jerbs.flag.should == :flag
+      expect(progress.reload).to be_completed
+      expect(progress.completion).to eq 100
+      expect(Jerbs.flag).to eq :flag
     end
 
     it "should fail the progress if the job fails" do
       progress.process_job(Jerbs, :fail)
       run_jobs
-      progress.reload.should be_failed
+      expect(progress.reload).to be_failed
+    end
+  end
+
+  describe '.context_type' do
+    it 'returns the correct representation of a quiz statistics relation' do
+      stats = Quizzes::QuizStatistics.create!(report_type: 'student_analysis')
+
+      progress = Progress.create!(tag: "test", context: stats)
+      progress.context = stats
+      progress.save
+
+      expect(progress.context_type).to eq "Quizzes::QuizStatistics"
+
+      Progress.where(id: progress).update_all(context_type: 'QuizStatistics')
+
+      expect(Progress.find(progress.id).context_type).to eq 'Quizzes::QuizStatistics'
     end
   end
 end

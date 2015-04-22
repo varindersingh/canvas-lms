@@ -21,13 +21,13 @@ module SIS
 
     def process
       start = Time.now
-      importer = Work.new(@batch_id, @root_account, @logger)
+      importer = Work.new(@batch, @root_account, @logger)
       AbstractCourse.process_as_sis(@sis_options) do
         yield importer
       end
       importer.abstract_courses_to_update_sis_batch_id.in_groups_of(1000, false) do |batch|
-        AbstractCourse.where(:id => batch).update_all(:sis_batch_id => @batch_id)
-      end if @batch_id
+        AbstractCourse.where(:id => batch).update_all(:sis_batch_id => @batch)
+      end if @batch
       @logger.debug("AbstractCourses took #{Time.now - start} seconds")
       return importer.success_count
     end
@@ -36,8 +36,8 @@ module SIS
     class Work
       attr_accessor :success_count, :abstract_courses_to_update_sis_batch_id
 
-      def initialize(batch_id, root_account, logger)
-        @batch_id = batch_id
+      def initialize(batch, root_account, logger)
+        @batch = batch
         @root_account = root_account
         @abstract_courses_to_update_sis_batch_id = []
         @logger = logger
@@ -52,16 +52,16 @@ module SIS
         raise ImportError, "No long_name given for abstract course #{abstract_course_id}" if long_name.blank?
         raise ImportError, "Improper status \"#{status}\" for abstract course #{abstract_course_id}" unless status =~ /\Aactive|\Adeleted/i
 
-        course = AbstractCourse.find_by_root_account_id_and_sis_source_id(@root_account.id, abstract_course_id)
+        course = AbstractCourse.where(root_account_id: @root_account, sis_source_id: abstract_course_id).first
         course ||= AbstractCourse.new
         if !course.stuck_sis_fields.include?(:enrollment_term_id)
-          course.enrollment_term = @root_account.enrollment_terms.find_by_sis_source_id(term_id) || @root_account.default_enrollment_term
+          course.enrollment_term = @root_account.enrollment_terms.where(sis_source_id: term_id).first || @root_account.default_enrollment_term
         end
         course.root_account = @root_account
 
         account = nil
-        account = Account.find_by_root_account_id_and_sis_source_id(@root_account.id, account_id) if account_id.present?
-        account ||= Account.find_by_root_account_id_and_sis_source_id(@root_account.id, fallback_account_id) if fallback_account_id.present?
+        account = @root_account.all_accounts.where(sis_source_id: account_id).first if account_id.present?
+        account ||= @root_account.all_accounts.where(sis_source_id: fallback_account_id).first if fallback_account_id.present?
         course.account = account if account
         course.account ||= @root_account
 
@@ -78,9 +78,9 @@ module SIS
         end
 
         if course.changed?
-          course.sis_batch_id = @batch_id if @batch_id
+          course.sis_batch_id = @batch.id if @batch
           course.save!
-        elsif @batch_id
+        elsif @batch
           @abstract_courses_to_update_sis_batch_id << course.id
         end
         @success_count += 1

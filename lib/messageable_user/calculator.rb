@@ -166,7 +166,7 @@ class MessageableUser
     def count_messageable_users_in_scope(scope)
       if scope
         # convert the group by into a select distinct
-        group_as_select = scope.scope(:find, :group)
+        group_as_select = scope.group_values
         scope.except(:select, :group, :order).select(group_as_select).uniq.count
       else
         0
@@ -186,7 +186,7 @@ class MessageableUser
         # to return a bookmark-paginated collection, so we craft an empty scope
         # by default
         scope = messageable_users_in_context_scope(options.delete(:context), options)
-        scope = search_scope(scope, options[:search], global_exclude_ids)
+        scope = search_scope(scope, options[:search], global_exclude_ids) if scope
         scope ||= MessageableUser.where('?', false)
         bookmark(scope)
       else
@@ -286,7 +286,7 @@ class MessageableUser
 
       # skipping messageability constraints, do I see the user in that specific
       # course, and if so with which enrollment type(s)?
-      if include_course_id && course = Course.find_by_id(include_course_id)
+      if include_course_id && course = Course.where(id: include_course_id).first
         missing_users = users.reject{ |user| user.global_common_courses.keys.include?(course.global_id) }
         if missing_user.present?
           course.shard.activate do
@@ -339,7 +339,7 @@ class MessageableUser
 
       # skipping messageability constraints, do I see the user in that specific
       # group?
-      if include_group_id && group = Group.find_by_id(include_group_id)
+      if include_group_id && group = Group.where(id: include_group_id).first
         missing_users = users.reject{ |user| user.global_common_groups.keys.include?(group.global_id) }
         if missing_users.present?
           group.shard.activate do
@@ -356,7 +356,7 @@ class MessageableUser
     # filters the provided list of users to just those that are participants in
     # the conversation
     def participants_in_conversation(users, conversation_id)
-      conversation = Conversation.find_by_id(conversation_id)
+      conversation = Conversation.where(id: conversation_id).first
       return [] unless conversation
 
       conversation.shard.activate do
@@ -405,7 +405,7 @@ class MessageableUser
     # populated only with the course given.
     def messageable_users_in_course_scope(course_or_id, enrollment_types=nil, options={})
       return unless course_or_id
-      course = course_or_id.is_a?(Course) ? course_or_id : Course.find_by_id(course_or_id)
+      course = course_or_id.is_a?(Course) ? course_or_id : Course.where(id: course_or_id).first
       return unless course
 
       course.shard.activate do
@@ -416,14 +416,10 @@ class MessageableUser
           :include_concluded_students => false,
           :course_workflow_state => course.workflow_state))
         scope =
-          if options[:admin_context]
-            scope.where(full_visibility_clause([course]))
-          else
-            case course_visibility(course)
-            when :full then scope.where(full_visibility_clause([course]))
-            when :sections then scope.where(section_visibility_clause([course]))
-            when :restricted then scope.where(restricted_visibility_clause([course]))
-            end
+          case course_visibility(course)
+          when :full then scope.where(full_visibility_clause([course]))
+          when :sections then scope.where(section_visibility_clause([course]))
+          when :restricted then scope.where(restricted_visibility_clause([course]))
           end
         scope = scope.where(observer_restriction_clause) if student_courses.present?
         scope = scope.where('enrollments.type' => enrollment_types) if enrollment_types
@@ -439,7 +435,7 @@ class MessageableUser
     # populated only with the course of the given section.
     def messageable_users_in_section_scope(section_or_id, enrollment_types=nil, options={})
       return unless section_or_id
-      section = section_or_id.is_a?(CourseSection) ? section_or_id : CourseSection.find_by_id(section_or_id)
+      section = section_or_id.is_a?(CourseSection) ? section_or_id : CourseSection.where(id: section_or_id).first
       return unless section
 
       section.shard.activate do
@@ -469,7 +465,7 @@ class MessageableUser
     # populated only with the group given.
     def messageable_users_in_group_scope(group_or_id, options={})
       return unless group_or_id
-      group = group_or_id.is_a?(Group) ? group_or_id : Group.find_by_id(group_or_id)
+      group = group_or_id.is_a?(Group) ? group_or_id : Group.where(id: group_or_id).first
       return unless group
 
       group.shard.activate do
@@ -490,8 +486,8 @@ class MessageableUser
 
     def search_scope(scope, search, global_exclude_ids)
       if global_exclude_ids.present?
-        target_shard = scope.scope(:find, :shard)
-        exclude_ids = global_exclude_ids.map{ |id| Shard.relative_id_for(id, target_shard) }
+        target_shard = scope.shard_value
+        exclude_ids = global_exclude_ids.map{ |id| Shard.relative_id_for(id, Shard.current, target_shard) }
         scope = scope.where(["users.id NOT IN (?)", exclude_ids])
       end
 
@@ -505,7 +501,7 @@ class MessageableUser
     end
 
     # restricts enrollments to those with extended states (see
-    # User.enrollment_conditions) of active, invited, and (conditionally)
+    # Enrollment::QueryBuilder) of active, invited, and (conditionally)
     # completed. also universally excludes student view enrollments
     #
     # with the :include_concluded option false (default: true), completed
@@ -516,11 +512,10 @@ class MessageableUser
     # admin enrollments are included. ignored if :include_concluded is false.
     #
     # the :strict_checks option (default: true) is per load_messageable_users
-    # and controls the strict_course_state parameter of
-    # User.enrollment_conditions.
+    # and gets passed along to Enrollment::QueryBuilder.new.
     #
     # the :course_workflow_state is useful for passing on to
-    # User.enrollment_conditions to simplify the queries when the enrollments
+    # Enrollment::QueryBuilder to simplify the queries when the enrollments
     # are known to come from course(s) with a single workflow_state
     #
     # may return nil, indicating the scope should be treated as empty.
@@ -532,11 +527,11 @@ class MessageableUser
         :course_workflow_state => nil
       }.merge(options)
       state_clauses = [
-        User.enrollment_conditions(:active, options[:strict_checks], options[:course_workflow_state]),
-        User.enrollment_conditions(:invited, options[:strict_checks], options[:course_workflow_state])
+        Enrollment::QueryBuilder.new(:active, options.slice(:strict_checks, :course_workflow_state)).conditions,
+        Enrollment::QueryBuilder.new(:invited, options.slice(:strict_checks, :course_workflow_state)).conditions
       ]
       if options[:include_concluded]
-        clause = User.enrollment_conditions(:completed, options[:strict_checks])
+        clause = Enrollment::QueryBuilder.new(:completed, options.slice(:strict_checks)).conditions
         clause << " AND enrollments.type IN ('TeacherEnrollment', 'TaEnrollment')" unless options[:include_concluded_students]
         state_clauses << clause
       end
@@ -572,6 +567,7 @@ class MessageableUser
         :common_role_column => 'enrollments.type'
       }.merge(options)
       scope = base_scope(options)
+      scope = scope.joins("INNER JOIN enrollments ON enrollments.user_id=users.id")
 
       enrollment_conditions = self.class.enrollment_conditions(options)
       if enrollment_conditions
@@ -581,12 +577,7 @@ class MessageableUser
         scope = scope.where('?', false)
       end
 
-      # this comes after the conditional join on courses that needs
-      # enrollments, because AREL is going to swap the order for some reason.
-      # if this came first (e.g. immediately after base_scope), then the join
-      # on courses would show up first in the SQL, which could make the
-      # database sad.
-      scope.joins("INNER JOIN enrollments ON enrollments.user_id=users.id")
+      scope
     end
 
     # further restricts the enrollment scope to users whose enrollment is
@@ -763,7 +754,7 @@ class MessageableUser
     def uncached_visible_account_ids
       # ditto
       @user.associated_accounts.with_each_shard(Shard.current).
-        select{ |account| account.grants_right?(@user, nil, :read_roster) }.
+        select{ |account| account.grants_right?(@user, :read_roster) }.
         map(&:id)
     end
 
@@ -834,7 +825,7 @@ class MessageableUser
 
       group_ids = [fully_visible_scope, section_visible_scope].map{ |scope| scope.map(&:group_id) }.flatten.uniq
       if group_ids.present?
-        Group.find_all_by_id(group_ids)
+        Group.where(id: group_ids).to_a
       else
         []
       end
@@ -849,7 +840,7 @@ class MessageableUser
     # get additional objects to include in the per-shard cache keys
     def shard_cached(key, *methods)
       @shard_caches ||= {}
-      @shard_caches[key] ||= 
+      @shard_caches[key] ||=
         begin
           by_shard = {}
           Shard.with_each_shard(@user.associated_shards) do
@@ -953,7 +944,7 @@ class MessageableUser
 
     def course_visibility(course)
       @course_visibilities ||= {}
-      @course_visibilities[course.global_id] ||= 
+      @course_visibilities[course.global_id] ||=
         course.enrollment_visibility_level_for(@user, course.section_visibilities_for(@user), true)
     end
 
@@ -1000,7 +991,7 @@ class MessageableUser
     def student_courses
       @student_courses_by_shard ||= {}
       @student_courses_by_shard[Shard.current] ||= all_courses.
-        select{ |course| course.primary_enrollment == 'StudentEnrollment' }
+        select{ |course| course.primary_enrollment_type == 'StudentEnrollment' }
     end
 
     def visible_section_ids_in_courses(courses)

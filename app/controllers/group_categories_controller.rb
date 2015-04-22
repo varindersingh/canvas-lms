@@ -22,55 +22,64 @@
 # different built-in group categories used, or custom ones can be created. The
 # built in group categories are:  "communities", "student_organized", and "imported".
 #
-# @object GroupCategory
+# @model GroupCategory
 #     {
-#       // The ID of the group category.
-#       "id": 17,
-#
-#       // The display name of the group category.
-#       "name": "Math Groups",
-#
-#       // Certain types of group categories have special role designations. Currently,
-#       // these include: "communities", "student_organized", and "imported".
-#       // Regular course/account group categories have a role of null.
-#       "role": "communities",
-#
-#       // If the group category allows users to join a group themselves, thought they may
-#       // only be a member of one group per group category at a time.
-#       // Values include "restricted", "enabled", and null
-#       // "enabled" allows students to assign themselves to a group
-#       // "restricted" restricts them to only joining a group in their section
-#       // null disallows students from joining groups
-#       "self_signup": null,
-#
-#       // The course or account that the category group belongs to. The pattern here is
-#       // that whatever the context_type is, there will be an _id field named
-#       // after that type. So if instead context_type was "Course", the
-#       // course_id field would be replaced by an course_id field.
-#       "context_type": "Account",
-#       "account_id": 3,
-#
-#       // If self-signup is enabled, group_limit can be set to cap the number of users
-#       // in each group. If null, there is no limit.
-#       "group_limit": null,
-#
-#       // If the group category has not yet finished a randomly student assignment request,
-#       // a progress object will be attached, which will contain information related to the
-#       // progress of the assignment request.
-#       // Refer to the Progress API for more information
-#        "progress": {
-#            "completion": 0,
-#            "context_id": 25,
-#            "context_type": "GroupCategory",
-#            "created_at": "2013-07-25T14:16:04-06:00",
-#            "id": 217,
-#            "message": null,
-#            "tag": "assign_unassigned_members",
-#            "updated_at": "2013-07-25T14:16:04-06:00",
-#            "user_id": null,
-#            "workflow_state": "running",
-#            "url": "http://localhost:3000/api/v1/progress/217"
-#        }
+#       "id": "GroupCategory",
+#       "description": "",
+#       "properties": {
+#         "id": {
+#           "description": "The ID of the group category.",
+#           "example": 17,
+#           "type": "integer"
+#         },
+#         "name": {
+#           "description": "The display name of the group category.",
+#           "example": "Math Groups",
+#           "type": "string"
+#         },
+#         "role": {
+#           "description": "Certain types of group categories have special role designations. Currently, these include: 'communities', 'student_organized', and 'imported'. Regular course/account group categories have a role of null.",
+#           "example": "communities",
+#           "type": "string"
+#         },
+#         "self_signup": {
+#           "description": "If the group category allows users to join a group themselves, thought they may only be a member of one group per group category at a time. Values include 'restricted', 'enabled', and null 'enabled' allows students to assign themselves to a group 'restricted' restricts them to only joining a group in their section null disallows students from joining groups",
+#           "type": "string",
+#           "allowableValues": {
+#             "values": [
+#               "restricted",
+#               "enabled"
+#             ]
+#           }
+#         },
+#         "auto_leader": {
+#           "description": "Gives instructors the ability to automatically have group leaders assigned.  Values include 'random', 'first', and null; 'random' picks a student from the group at random as the leader, 'first' sets the first student to be assigned to the group as the leader",
+#           "type": "string",
+#           "allowableValues": {
+#             "values": [
+#               "first",
+#               "random"
+#             ]
+#           }
+#         },
+#         "context_type": {
+#           "description": "The course or account that the category group belongs to. The pattern here is that whatever the context_type is, there will be an _id field named after that type. So if instead context_type was 'Course', the course_id field would be replaced by an course_id field.",
+#           "example": "Account",
+#           "type": "string"
+#         },
+#         "account_id": {
+#           "example": 3,
+#           "type": "integer"
+#         },
+#         "group_limit": {
+#           "description": "If self-signup is enabled, group_limit can be set to cap the number of users in each group. If null, there is no limit.",
+#           "type": "integer"
+#         },
+#         "progress": {
+#           "description": "If the group category has not yet finished a randomly student assignment request, a progress object will be attached, which will contain information related to the progress of the assignment request. Refer to the Progress API for more information",
+#           "$ref": "Progress"
+#         }
+#       }
 #     }
 #
 class GroupCategoriesController < ApplicationController
@@ -92,7 +101,7 @@ class GroupCategoriesController < ApplicationController
   # Returns a list of group categories in a context
   #
   # @example_request
-  #     curl https://<canvas>/api/v1/accounts/<account_id>/group_categories \ 
+  #     curl https://<canvas>/api/v1/accounts/<account_id>/group_categories \
   #          -H 'Authorization: Bearer <token>'
   #
   # @returns [GroupCategory]
@@ -103,7 +112,9 @@ class GroupCategoriesController < ApplicationController
         if authorized_action(@context, @current_user, :manage_groups)
           path = send("api_v1_#{@context.class.to_s.downcase}_group_categories_url")
           paginated_categories = Api.paginate(@categories, self, path)
-          render :json => paginated_categories.map { |c| group_category_json(c, @current_user, session, :include => ['progress_url']) }
+          includes = ['progress_url']
+          includes.concat(params[:includes]) if params[:includes]
+          render :json => paginated_categories.map { |c| group_category_json(c, @current_user, session, :include => includes) }
         end
       end
     end
@@ -115,7 +126,7 @@ class GroupCategoriesController < ApplicationController
   # the rights to see it.
   #
   # @example_request
-  #     curl https://<canvas>/api/v1/group_categories/<group_category_id> \ 
+  #     curl https://<canvas>/api/v1/group_categories/<group_category_id> \
   #          -H 'Authorization: Bearer <token>'
   #
   # @returns GroupCategory
@@ -123,7 +134,9 @@ class GroupCategoriesController < ApplicationController
     respond_to do |format|
       format.json do
         if authorized_action(@group_category.context, @current_user, :manage_groups)
-          render :json => group_category_json(@group_category, @current_user, session, :include => ['progress_url'])
+          includes = ['progress_url']
+          includes.concat(params[:includes]) if params[:includes]
+          render :json => group_category_json(@group_category, @current_user, session, :include => includes)
         end
       end
     end
@@ -133,23 +146,30 @@ class GroupCategoriesController < ApplicationController
   # @API Create a Group Category
   # Create a new group category
   #
-  # @argument name [String]
+  # @argument name [Required, String]
   #   Name of the group category
   #
-  # @argument self_signup [Optional, "enabled"|"restricted"]
+  # @argument self_signup [String, "enabled"|"restricted"]
   #   Allow students to sign up for a group themselves (Course Only).
   #   valid values are:
   #   "enabled":: allows students to self sign up for any group in course
   #   "restricted":: allows students to self sign up only for groups in the
   #                  same section null disallows self sign up
-  # @argument group_limit [Optional]
+  #
+  # @argument auto_leader [String, "first"|"random"]
+  #   Assigns group leaders automatically when generating and allocating students to groups
+  #   Valid values are:
+  #   "first":: the first student to be allocated to a group is the leader
+  #   "random":: a random student from all members is chosen as the leader
+  #
+  # @argument group_limit [Integer]
   #   Limit the maximum number of users in each group (Course Only). Requires
   #   self signup.
   #
-  # @argument create_group_count [Optional]
+  # @argument create_group_count [Integer]
   #   Create this number of groups (Course Only).
   #
-  # @argument split_group_count [Optional] (Deprecated)
+  # @argument split_group_count (Deprecated)
   #   Create this number of groups, and evenly distribute students
   #   among them. not allowed with "enable_self_signup". because
   #   the group assignment happens synchronously, it's recommended
@@ -157,18 +177,19 @@ class GroupCategoriesController < ApplicationController
   #   (Course Only)
   #
   # @example_request
-  #     curl htps://<canvas>/api/v1/courses/<course_id>/group_categories \ 
-  #         -F 'name=Project Groups' \ 
+  #     curl htps://<canvas>/api/v1/courses/<course_id>/group_categories \
+  #         -F 'name=Project Groups' \
   #         -H 'Authorization: Bearer <token>'
   #
   # @returns GroupCategory
   def create
     if authorized_action(@context, @current_user, :manage_groups)
-      process_group_category_api_params if api_request?
       @group_category = @context.group_categories.build
       if populate_group_category_from_params
         if api_request?
-          render :json => group_category_json(@group_category, @current_user, session)
+          includes = ["unassigned_users_count", "groups_count"]
+          includes.concat(params[:includes]) if params[:includes]
+          render :json => group_category_json(@group_category, @current_user, session, include: includes)
         else
           flash[:notice] = t('notices.create_category_success', 'Category was successfully created.')
           render :json => [@group_category.as_json, @group_category.groups.map { |g| g.as_json(:include => :users) }]
@@ -183,20 +204,27 @@ class GroupCategoriesController < ApplicationController
   # @argument name [String]
   #   Name of the group category
   #
-  # @argument self_signup [Optional, "enabled"|"restricted"]
+  # @argument self_signup [String, "enabled"|"restricted"]
   #   Allow students to sign up for a group themselves (Course Only).
   #   Valid values are:
   #   "enabled":: allows students to self sign up for any group in course
   #   "restricted":: allows students to self sign up only for groups in the
   #                  same section null disallows self sign up
-  # @argument group_limit [Optional]
+  #
+  # @argument auto_leader [String, "first"|"random"]
+  #   Assigns group leaders automatically when generating and allocating students to groups
+  #   Valid values are:
+  #   "first":: the first student to be allocated to a group is the leader
+  #   "random":: a random student from all members is chosen as the leader
+  #
+  # @argument group_limit [Integer]
   #   Limit the maximum number of users in each group (Course Only). Requires
   #   self signup.
   #
-  # @argument create_group_count [Optional]
+  # @argument create_group_count [Integer]
   #   Create this number of groups (Course Only).
   #
-  # @argument split_group_count [Optional] (Deprecated)
+  # @argument split_group_count (Deprecated)
   #   Create this number of groups, and evenly distribute students
   #   among them. not allowed with "enable_self_signup". because
   #   the group assignment happens synchronously, it's recommended
@@ -204,19 +232,20 @@ class GroupCategoriesController < ApplicationController
   #   (Course Only)
   #
   # @example_request
-  #     curl https://<canvas>/api/v1/group_categories/<group_category_id> \ 
-  #         -X PUT \ 
-  #         -F 'name=Project Groups' \ 
+  #     curl https://<canvas>/api/v1/group_categories/<group_category_id> \
+  #         -X PUT \
+  #         -F 'name=Project Groups' \
   #         -H 'Authorization: Bearer <token>'
   #
   # @returns GroupCategory
   def update
     if authorized_action(@context, @current_user, :manage_groups)
-      @group_category ||= @context.group_categories.find_by_id(params[:category_id])
+      @group_category ||= @context.group_categories.where(id: params[:category_id]).first
       if api_request?
-        process_group_category_api_params
         if populate_group_category_from_params
-          render :json => group_category_json(@group_category, @current_user, session, :include => ['progress_url'])
+          includes = ['progress_url']
+          includes.concat(params[:includes]) if params[:includes]
+          render :json => group_category_json(@group_category, @current_user, session, :include => includes)
         end
       else
         return render(:json => {'status' => 'not found'}, :status => :not_found) unless @group_category
@@ -231,16 +260,16 @@ class GroupCategoriesController < ApplicationController
 
   # @API Delete a Group Category
   # Deletes a group category and all groups under it. Protected group
-  # categories can not be deleted, i.e. "communities", "student_organized", and "imported".
+  # categories can not be deleted, i.e. "communities" and "student_organized".
   #
   # @example_request
   #     curl https://<canvas>/api/v1/group_categories/<group_category_id> \
-  #           -X DELETE \ 
+  #           -X DELETE \
   #           -H 'Authorization: Bearer <token>'
   #
   def destroy
     if authorized_action(@context, @current_user, :manage_groups)
-      @group_category = @group_category || @context.group_categories.find_by_id(params[:category_id])
+      @group_category = @group_category || @context.group_categories.where(id: params[:category_id]).first
       return render(:json => {'status' => 'not found'}, :status => :not_found) unless @group_category
       return render(:json => {'status' => 'unauthorized'}, :status => :unauthorized) if @group_category.protected?
       if @group_category.destroy
@@ -265,10 +294,10 @@ class GroupCategoriesController < ApplicationController
   # Returns a list of groups in a group category
   #
   # @example_request
-  #     curl https://<canvas>/api/v1/group_categories/<group_cateogry_id>/groups \ 
+  #     curl https://<canvas>/api/v1/group_categories/<group_cateogry_id>/groups \
   #          -H 'Authorization: Bearer <token>'
   #
-  # @returns [Groups]
+  # @returns [Group]
   def groups
     if authorized_action(@context, @current_user, :manage_groups)
       @groups = @group_category.groups.active.by_name
@@ -282,11 +311,11 @@ class GroupCategoriesController < ApplicationController
   #
   # Returns a list of users in the group category.
   #
-  # @argument search_term [Optional, String]
+  # @argument search_term [String]
   #   The partial name or full ID of the users to match and return in the results
   #   list. Must be at least 3 characters.
   #
-  # @argument unassigned [Optional, Boolean]
+  # @argument unassigned [Boolean]
   #   Set this value to true if you wish only to search unassigned users in the
   #   group category.
   #
@@ -303,12 +332,11 @@ class GroupCategoriesController < ApplicationController
     end
 
     search_term = params[:search_term].presence
-
     search_params = params.slice(:search_term)
-    search_params[:enrollment_role] = "StudentEnrollment" if @context.is_a? Course
+    search_params[:enrollment_type] = "student" if @context.is_a? Course
 
-    @group_category ||= @context.group_categories.find_by_id(params[:category_id])
-    exclude_groups = value_to_boolean(params[:unassigned]) ? @group_category.groups.active : []
+    @group_category ||= @context.group_categories.where(id: params[:category_id]).first
+    exclude_groups = value_to_boolean(params[:unassigned]) ? @group_category.groups.active.pluck(:id) : []
     search_params[:exclude_groups] = exclude_groups
 
     if search_term
@@ -318,7 +346,7 @@ class GroupCategoriesController < ApplicationController
     end
 
     users = Api.paginate(users, self, api_v1_group_category_users_url)
-    render :json => users.map { |u| user_json(u, @current_user, session, [], @context) }
+    render :json => users_json(users, @current_user, session, Array(params[:include]), @context, nil, Array(params[:exclude]))
   end
 
   # @API Assign unassigned members
@@ -326,7 +354,7 @@ class GroupCategoriesController < ApplicationController
   # Assign all unassigned members as evenly as possible among the existing
   # student groups.
   #
-  # @argument sync [Optional, Boolean]
+  # @argument sync [Boolean]
   #   The assigning is done asynchronously by default. If you would like to
   #   override this and have the assigning done synchronously, set this value
   #   to true.
@@ -435,45 +463,19 @@ class GroupCategoriesController < ApplicationController
   end
 
   def populate_group_category_from_params
-    if api_request?
-      args = params
-    else
-      args = params[:category]
-    end
-    name = args[:name] || @group_category.name
-    enable_self_signup = value_to_boolean args[:enable_self_signup]
-    restrict_self_signup = value_to_boolean args[:restrict_self_signup]
-    @group_category.name = name
-    @group_category.configure_self_signup(enable_self_signup, restrict_self_signup)
-    if @context.is_a?(Course)
-      @group_category.create_group_count = args[:create_group_count].to_i
-      # TODO: kill this in a subsequent API version
-      split_group_count = args[:split_groups] != '0' ? args[:split_group_count].to_i : 0
-      if split_group_count > 0 && !@group_category.self_signup
-        @group_category.create_group_count = split_group_count
-        @group_category.assign_unassigned_members = true
-      end
-    end
-    @group_category.group_limit = args[:group_limit]
-    if !@group_category.save
+    args = api_request? ? params : params[:category]
+    @group_category = GroupCategories::ParamsPolicy.new(@group_category, @context).populate_with(args)
+    unless @group_category.save
       render :json => @group_category.errors, :status => :bad_request
       return false
     end
     true
   end
 
-  def process_group_category_api_params
-    if params.has_key? 'self_signup'
-      self_signup = params[:self_signup].to_s.downcase
-      params[:enable_self_signup] = "1" if %w(enabled restricted).include? self_signup
-      params[:restrict_self_signup] = "1" if "restricted" == self_signup
-    end
-  end
-
   protected
   def get_category_context
     begin
-      @group_category = api_request? ? GroupCategory.find(params[:group_category_id]) : GroupCategory.find(params[:id])
+      @group_category = api_request? ? GroupCategory.active.find(params[:group_category_id]) : GroupCategory.active.find(params[:id])
     rescue ActiveRecord::RecordNotFound
       return render(:json => {'status' => 'not found'}, :status => :not_found) unless @group_category
     end
@@ -481,7 +483,3 @@ class GroupCategoriesController < ApplicationController
   end
 
 end
-
-
-
-

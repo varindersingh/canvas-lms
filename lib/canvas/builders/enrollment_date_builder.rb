@@ -30,12 +30,13 @@ class EnrollmentDateBuilder
 
   def self.preload(enrollments)
     return if enrollments.empty?
-    Enrollment.send(:preload_associations, enrollments, :course) unless enrollments.first.loaded_course?
+    courses_loaded = enrollments.first.association(:course).loaded?
+    ActiveRecord::Associations::Preloader.new(enrollments, :course).run unless courses_loaded
 
     to_preload = enrollments.reject { |e| fetch(e) }
     return if to_preload.empty?
-    Enrollment.send(:preload_associations, to_preload, :course_section)
-    Course.send(:preload_associations, to_preload.map(&:course).uniq, :enrollment_term)
+    ActiveRecord::Associations::Preloader.new(to_preload, :course_section).run
+    ActiveRecord::Associations::Preloader.new(to_preload.map(&:course).uniq, :enrollment_term).run
     to_preload.each { |e| build(e) }
   end
 

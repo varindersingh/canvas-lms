@@ -19,6 +19,7 @@ module Api::V1::ContextModule
   include Api::V1::Json
   include Api::V1::User
   include Api::V1::ExternalTools::UrlHelpers
+  include Api::V1::Locked
 
   MODULE_JSON_ATTRS = %w(id position name unlock_at)
 
@@ -27,7 +28,8 @@ module Api::V1::ContextModule
   # optionally pass progression to include 'state', 'completed_at'
   def module_json(context_module, current_user, session, progression = nil, includes = [], opts = {})
     hash = api_json(context_module, current_user, session, :only => MODULE_JSON_ATTRS)
-    hash['require_sequential_progress'] = !!context_module.require_sequential_progress
+    hash['require_sequential_progress'] = !!context_module.require_sequential_progress?
+    hash['publish_final_grade'] = context_module.publish_final_grade?
     hash['prerequisite_module_ids'] = context_module.prerequisites.reject{|p| p[:type] != 'context_module'}.map{|p| p[:id]}
     if progression
       hash['state'] = progression.workflow_state
@@ -35,11 +37,11 @@ module Api::V1::ContextModule
     end
     has_update_rights = context_module.grants_right?(current_user, :update)
     hash['published'] = context_module.active? if has_update_rights
-    tags = context_module.content_tags_visible_to(@current_user)
+    tags = context_module.content_tags_visible_to(@current_user, assignment_visibilities: opts[:assignment_visibilities], discussion_visibilities: opts[:discussion_visibilities], quiz_visibilities: opts[:quiz_visibilities], observed_student_ids: opts[:observed_student_ids])
     count = tags.count
     hash['items_count'] = count
     hash['items_url'] = polymorphic_url([:api_v1, context_module.context, context_module, :items])
-    if includes.include?('items') && count <= Setting.get_cached('api_max_per_page', '50').to_i
+    if includes.include?('items') && count <= Setting.get('api_max_per_page', '50').to_i
       if opts[:search_term].present? && !context_module.matches_attribute?(:name, opts[:search_term])
         tags = ContentTag.search_by_attribute(tags, :title, opts[:search_term])
         return nil if tags.count == 0
@@ -66,11 +68,16 @@ module Api::V1::ContextModule
     unless content_tag.content_type == 'ContextModuleSubHeader'
       hash['html_url'] = case content_tag.content_type
         when 'ExternalUrl'
-          # API prefers to redirect to the external page, rather than host in an iframe
-          api_v1_course_context_module_item_redirect_url(:id => content_tag.id)
+          if value_to_boolean(request.params[:frame_external_urls])
+            # canvas UI wants external links hosted in iframe
+            course_context_modules_item_redirect_url(:id => content_tag.id, :course_id => context_module.context.id)
+          else
+            # API prefers to redirect to the external page, rather than host in an iframe
+            api_v1_course_context_module_item_redirect_url(:id => content_tag.id, :course_id => context_module.context.id)
+          end
         else
           # otherwise we'll link to the same thing the web UI does
-          course_context_modules_item_redirect_url(:id => content_tag.id)
+          course_context_modules_item_redirect_url(:id => content_tag.id, :course_id => context_module.context.id)
       end
     end
     
@@ -88,25 +95,30 @@ module Api::V1::ContextModule
     api_url = nil
     case content_tag.content_type
       # course context
-      when 'Assignment', 'WikiPage', 'DiscussionTopic', 'Quiz'
+      when *Quizzes::Quiz.class_names
+        api_url = api_v1_course_quiz_url(context_module.context, content_tag.content)
+      when 'Assignment', 'WikiPage', 'DiscussionTopic'
         api_url = polymorphic_url([:api_v1, context_module.context, content_tag.content])
       # no context
       when 'Attachment'
-        api_url = polymorphic_url([:api_v1, content_tag.content])
+        api_url = polymorphic_url([:api_v1, context_module.context, content_tag.content])
       when 'ContextExternalTool'
         if content_tag.content && content_tag.content.tool_id
           api_url = sessionless_launch_url(context_module.context, :id => content_tag.content.id, :url => content_tag.content.url)
-        else
+        elsif content_tag.content
           api_url = sessionless_launch_url(context_module.context, :url => content_tag.content.url)
+        else
+          api_url = sessionless_launch_url(context_module.context, :url => content_tag.url)
         end
     end
     hash['url'] = api_url if api_url
 
-    # add external_url, if applicable
-    hash['external_url'] = content_tag.url if ['ExternalUrl', 'ContextExternalTool'].include?(content_tag.content_type)
-
-    # add new_tab, if applicable
-    hash['new_tab'] = content_tag.new_tab if content_tag.content_type == 'ContextExternalTool'
+    if ['ExternalUrl', 'ContextExternalTool'].include?(content_tag.content_type)
+      # add external_url, if applicable
+      hash['external_url'] = content_tag.url
+      # add new_tab, if applicable
+      hash['new_tab'] = content_tag.new_tab
+    end
 
     # add completion requirements
     if criterion = context_module.completion_requirements && context_module.completion_requirements.detect { |r| r[:id] == content_tag.id }
@@ -135,11 +147,29 @@ module Api::V1::ContextModule
     item = item.assignment if item.is_a?(DiscussionTopic) && item.assignment
     item = item.overridden_for(current_user) if item.respond_to?(:overridden_for)
 
-    [:due_at, :unlock_at, :lock_at, :points_possible].each do |attr|
+    [:usage_rights, :thumbnail_url, :locked, :hidden, :lock_explanation, :display_name, :due_at, :unlock_at, :lock_at, :points_possible].each do |attr|
       if item.respond_to?(attr) && val = item.try(attr)
         details[attr] = val
       end
     end
+
+    item_type = case content_tag.content_type
+      when 'Quiz', 'Quizzes::Quiz'
+        'quiz'
+      when 'Assignment'
+        'assignment'
+      when 'DiscussionTopic'
+        'topic'
+      when 'Attachment'
+        'file'
+      when 'WikiPage'
+        'page'
+      else
+        ''
+    end
+    lock_item = item && item.respond_to?(:locked_for?) ? item : content_tag
+    locked_json(details, lock_item, current_user, item_type)
+
     details
   end
 end

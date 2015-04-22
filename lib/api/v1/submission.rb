@@ -53,7 +53,7 @@ module Api::V1::Submission
       end
     end
 
-    if includes.include?("rubric_assessment") && submission.rubric_assessment
+    if includes.include?("rubric_assessment") && submission.rubric_assessment && submission.grants_right?(user, :read_grade)
       ra = submission.rubric_assessment.data
       hash['rubric_assessment'] = {}
       ra.each { |rating| hash['rubric_assessment'][rating[:criterion_id]] = rating.slice(:points, :comments) }
@@ -68,11 +68,15 @@ module Api::V1::Submission
     end
 
     if includes.include?("html_url")
-      hash['html_url'] = course_assignment_submission_url(submission.context.id, assignment.id, user.id)
+      hash['html_url'] = course_assignment_submission_url(submission.context.id, assignment.id, submission.user.id)
     end
 
     if includes.include?("user")
       hash['user'] = user_json(submission.user, user, session, ['avatar_url'], submission.context, nil)
+    end
+
+    if includes.include?("visibility")
+      hash['assignment_visible'] = submission.assignment_visible_to_user?(submission.user)
     end
 
     hash
@@ -114,7 +118,7 @@ module Api::V1::Submission
       hash['media_comment'] = media_comment_json(:media_id => attempt.media_comment_id, :media_type => attempt.media_comment_type)
     end
 
-    if attempt.turnitin_data && attempt.grants_right?(@current_user, :view_turnitin_report)
+    if attempt.turnitin_data.present? && attempt.grants_right?(@current_user, :view_turnitin_report)
       turnitin_hash = attempt.turnitin_data.dup
       turnitin_hash.delete(:last_processed_attempt)
       hash['turnitin_data'] = turnitin_hash
@@ -126,7 +130,8 @@ module Api::V1::Submission
       hash['attachments'] = attachments.map do |attachment|
         attachment.skip_submission_attachment_lock_checks = true
         atjson = attachment_json(attachment, user, {},
-                                 submission_attachment: true)
+                                 submission_attachment: true,
+                                 include: ['preview_url'])
         attachment.skip_submission_attachment_lock_checks = false
         atjson
       end.compact unless attachments.blank?
@@ -139,7 +144,7 @@ module Api::V1::Submission
       # group assignments will have a child topic for each group.
       # it's also possible the student posted in the main topic, as well as the
       # individual group one. so we search far and wide for all student entries.
-      if assignment.has_group_category?
+      if assignment.discussion_topic.has_group_category?
         entries = assignment.discussion_topic.child_topics.map {|t| t.discussion_entries.active.for_user(attempt.user_id) }.flatten.sort_by{|e| e.created_at}
       else
         entries = assignment.discussion_topic.discussion_entries.active.for_user(attempt.user_id)
@@ -149,5 +154,56 @@ module Api::V1::Submission
 
     hash
   end
-end
 
+  # Create an attachment with a ZIP archive of an assignment's submissions.
+  # The attachment will be re-created if it's 1 hour old, or determined to be
+  # "stale". See the argument descriptions for testing the staleness of the attachment.
+  #
+  # @param [Assignment] assignment
+  # The assignment, or an object that implements its interface, for which the
+  # submissions will be zipped.
+  #
+  # @param [DateTime] updated_at
+  # A timestamp that marks the latest update to the assignment object which will
+  # be used to determine whether the attachment will be re-created.
+  #
+  # Note that this timestamp will be ignored if the attachment is 1 hour old.
+  #
+  # @return [Attachment] The attachment that contains the archive.
+  def submission_zip(assignment, updated_at = nil)
+    attachments = assignment.attachments.where({
+      display_name: 'submissions.zip',
+      workflow_state: %w[to_be_zipped zipping zipped errored unattached],
+      user_id: @current_user
+    }).order(:created_at).all
+
+    attachment = attachments.pop
+    attachments.each { |a| a.destroy! }
+
+    # Remove the earlier attachment and re-create it if it's "stale"
+    if attachment
+      created_at = attachment.created_at
+      updated_at ||= assignment.submissions.map { |s| s.submitted_at }.compact.max
+
+      if created_at < 1.hour.ago || (updated_at && created_at < updated_at)
+        attachment.destroy!
+        attachment = nil
+      end
+    end
+
+    if !attachment
+      attachment = assignment.attachments.build(:display_name => 'submissions.zip')
+      attachment.workflow_state = 'to_be_zipped'
+      attachment.file_state = '0'
+      attachment.user = @current_user
+      attachment.save!
+
+      ContentZipper.send_later_enqueue_args(:process_attachment, {
+        priority: Delayed::LOW_PRIORITY,
+        max_attempts: 1
+      }, attachment)
+    end
+
+    attachment
+  end
+end

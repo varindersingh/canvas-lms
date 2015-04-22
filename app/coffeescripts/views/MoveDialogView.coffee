@@ -1,13 +1,16 @@
 define [
+  'jquery'
   'underscore'
   'compiled/views/DialogFormView'
   'compiled/views/MoveDialogSelect'
   'jst/MoveDialog'
   'jst/EmptyDialogFormWrapper'
-], (_, DialogFormView, MoveDialogSelect, template, wrapper) ->
+], ($, _, DialogFormView, MoveDialogSelect, template, wrapper) ->
 
   class MoveDialogView extends DialogFormView
     setViewProperties: false
+
+    className: 'form-dialog'
 
     defaults:
       width: 450
@@ -42,6 +45,11 @@ define [
     # then the childKey would be 'assignments'
     # required if @nested
     @optionProperty 'childKey'
+
+    # {jQuery selector}
+    # link to focus on after dialog is closed
+    # without taking any action
+    @optionProperty 'closeTarget'
 
     # {string or function}
     # url to post to when saving the form
@@ -90,17 +98,19 @@ define [
 
     # attaches child views to @$childContainer
     attachChildViews: ->
-      container = @$childContainer.detach()
+      $container = @$childContainer.detach()
       if @parentListView
-        container.append(@parentListView.render().el)
-      container.append(@listView.render().el)
-      @$content.append(container)
+        $container.append(@parentListView.render().el)
+      $container.append(@listView.render().el)
+      @$content.append($container)
 
     cleanup: =>
       @parentListView?.remove()
       @listView?.remove()
       @parentListView = @listView = null
       @dialog.option "close", null
+      @close()
+      @closeTarget?.focus()
 
     #lookup new collection, and set it on
     #the nested view
@@ -148,8 +158,8 @@ define [
 
 
     onSaveSuccess: (data) =>
-      # assume collID is an int
-      collID = parseInt @parentListView?.value(), 10
+      # collID must be a string
+      collID = @parentListView?.value()
       newCollection = @parentCollection?.get(collID).get(@childKey)
 
       # there is a currentCollection, but it doesn't match the model's collection
@@ -162,15 +172,11 @@ define [
         # if we know how
         if @parentKey
           @model.set @parentKey, collID
-
-        positions = [1..newCollection.length]
       else
         newCollection = @model.collection
-        #unfortunate thing we have to do for AssignmentGroups,
-        #not sure about others...
-        positions = newCollection.pluck 'position'
 
       #update all of the position attributes
+      positions = [1..newCollection.length]
       _.each data.order, (id, index) ->
         newCollection.get(id)?.set 'position', positions[index]
 

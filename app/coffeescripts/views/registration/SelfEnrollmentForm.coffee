@@ -32,6 +32,7 @@ define [
       'click #logout_link': 'logOutAndRefresh'
 
     initialize: (@options = {}) ->
+      super
       @enrollUrl = @$el.attr('action')
       @action = @initialAction = @$el.find('input[type=hidden][name=initial_action]').val()
       @$el.formSubmit {@beforeSubmit, @success, @errorFormatter, disableWhileLoading: 'spin_on_success'}
@@ -76,22 +77,20 @@ define [
       ret = switch @action
         when 'create' then registrationErrors(errors)
         when 'log_in' then @loginErrors(errors)
-        when 'enroll' then @enrollErrors(registrationErrors(errors))
+        when 'enroll' then @enrollErrors(errors)
       ret
 
     loginErrors: (errors) ->
       errors = errors.base
-      error = errors[errors.length - 1].message
+      error = errors[errors.length - 1]
       {'pseudonym[password]': error}
 
     enrollErrors: (errors) =>
-      # move the "already enrolled" error to the username, since that's visible
-      if errors['user[self_enrollment_code]']
-        errors['pseudonym[unique_id]'] ?= []
-        errors['pseudonym[unique_id]'].push errors['user[self_enrollment_code]'][0]
-        delete errors['user[self_enrollment_code]']
-      # since we don't reload the form, we want a subsequent login or signup
-      # attempt to work
+      if errors.user?.errors.self_enrollment_code?[0].type == "already_enrolled"
+        # just reload if already enrolled
+        location.reload true
+        return []
+
       @action = @initialAction
       @logOut()
       errors
@@ -101,7 +100,7 @@ define [
       @$el.submit()
 
     logOut: (refresh = false) =>
-      $.ajaxJSON '/logout', 'POST', {}, ->
+      $.ajaxJSON '/logout', 'DELETE', {}, ->
         location.reload true if refresh
 
     logOutAndRefresh: (e) =>

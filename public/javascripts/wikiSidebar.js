@@ -20,6 +20,7 @@ define([
   'i18n!wiki.sidebar',
   'jquery' /* $ */,
   'str/htmlEscape',
+  'compiled/util/UsageRights' /* Usage Rights for File Uploading */,
   'jquery.ajaxJSON' /* ajaxJSON */,
   'jquery.inst_tree' /* instTree */,
   'jquery.instructure_forms' /* formSubmit, handlesHTML5Files, ajaxFileUpload, fileData */,
@@ -31,9 +32,8 @@ define([
   'tinymce.editor_box',
   'vendor/jquery.pageless' /* pageless */,
   'jqueryui/accordion' /* /\.accordion\(/ */,
-  'jqueryui/tabs' /* /\.tabs/ */,
-  'vendor/scribd.view' /* scribd */
-], function(I18n, $, htmlEscape) {
+  'jqueryui/tabs' /* /\.tabs/ */
+], function(I18n, $, htmlEscape, UsageRights) {
 
   var $editor_tabs,
       $tree1,
@@ -41,7 +41,8 @@ define([
       $course_show_secondary,
       $sidebar_upload_image_form,
       $sidebar_upload_file_form,
-      $wiki_sidebar_select_folder_dialog;
+      $wiki_sidebar_select_folder_dialog,
+      treeItemCount=0;
 
   // unlikely, but there's a chance this domready call will happen after other
   // scripts try to call methods on wikiSidebar, need to re-architect this a bit
@@ -56,10 +57,17 @@ define([
   });
 
   var wikiSidebar = {
+    // Generate a new tree item id. Type can be either 'file' or 'folder'
+    generateTreeItemID: function(type) {
+      var id = type + "_" + treeItemCount;
+      treeItemCount++;
+
+      return id;
+    },
     itemSelected: function(item) {
       switch(item.item_type) {
         case 'image':
-          wikiSidebar.editor.editorBox('insert_code', '<img alt="' + item.title + '" src="' + item.link_url + '"/>');
+          wikiSidebar.editor.editorBox('insert_code', '<img alt="' + htmlEscape(item.title) + '" src="' + htmlEscape(item.link_url) + '"/>');
           break;
         default: // we'll rely on enhance-user-content to create youtube thumbnails, etc.
           wikiSidebar.editor.editorBox('create_link', {title: (item.title || I18n.t("no_title", "No title")), url: item.link_url});
@@ -68,14 +76,19 @@ define([
     },
     fileSelected: function(node) {
       var $span = node.find('span.text'),
-          url = $span.attr('rel'),
-          title = $span.text();
+          url = $span.attr('rel');
+
+      // Remove the screenreader only from the text
+      var title = $span.clone();
+      title.find('.screenreader-only').remove()
+      title = title.text();
+
       wikiSidebar.editor.editorBox('create_link', {title: title , url: url, file: true, image: node.hasClass('image'), scribdable: node.hasClass('scribdable'), kaltura_entry_id: node.attr('data-media-entry-id'), kaltura_media_type: node.hasClass('video_playback') ? 'video' : 'audio'});
     },
     imageSelected: function($img) {
       var src = $img.data('url') || $img.attr('src'),
           alt = $img.attr('alt');
-      wikiSidebar.editor.editorBox('insert_code', '<img alt="'+alt+'" src="'+src+'"/>');
+      wikiSidebar.editor.editorBox('insert_code', '<img alt="'+htmlEscape(alt)+'" src="'+htmlEscape(src)+'"/>');
     },
     fileAdded: function(attachment, newUploadOrCallbackOrParent, fileCallback) {
       var children, newUpload, imageCallback, $file;
@@ -92,23 +105,28 @@ define([
       }
       if(children.length || fileCallback) {
         var file = attachment;
+        var displayName = "<span class='screenreader-only'>" + htmlEscape(file.display_name) + " " + htmlEscape(I18n.t('aria_tree.file', 'file')) + "</span>" + htmlEscape(file.display_name);
+
         $file = $tree1.find(".file_blank").clone(true);
         $file
           .attr('class', 'file')
-          .attr('title', file.display_name)
+          .attr('title', htmlEscape(file.display_name))
           .attr('data-tooltip', '')
+          .attr('aria-level', children.data('level'))
+          .attr('id', this.generateTreeItemID('file'))
           .addClass(file.mime_class)
-          .toggleClass('scribdable', file['scribdable?']);
+          .toggleClass('scribdable', !!(file.canvadoc_session_url));
         if(file.media_entry_id) {
           $file
             .addClass('kalturable')
             .attr('data-media-entry-id', file.media_entry_id)
             .addClass(file.content_type && file.content_type.match(/video/) ? 'video_playback' : 'audio_playback');
         }
-        file.name = file.display_name;
+        file.name = displayName;
         $file.fillTemplateData({
           data: file,
-          hrefValues: ['id']
+          hrefValues: ['id'],
+          htmlValues: ['name']
         });
         if (children) {
           children.append($file);
@@ -160,11 +178,16 @@ define([
       $.ajaxJSON(url, 'GET', {}, function(data) {
         $loading.remove();
         var children = node.find('ul');
+        // Update folder level for accessiblity
+        children.data('level', children.parents('ul:first').data('level') + 1);
+
         for(var idx in data.sub_folders) {
           var folder = data.sub_folders[idx].folder;
           var $folder = $tree1.find(".folder_blank").clone(true);
           $folder.attr('class', 'folder').data('id', folder.id).addClass('folder_' + folder.id);
-          $folder.find('.name').text(folder.name);
+          $folder.find('.name').html(" <span class='screenreader-only'>" + htmlEscape(folder.name) + " " + htmlEscape(I18n.t('aria_tree.folder', 'folder')) + "</span>" + htmlEscape(folder.name) );
+          $folder.attr('aria-level', children.data('level'))
+                 .attr('id', wikiSidebar.generateTreeItemID('folder'));
           children.append($folder);
           $folder.show();
         }
@@ -191,7 +214,7 @@ define([
         }
         var $option = $("<option />");
         $option.val(folder.id);
-        $option.html(name);
+        $option.html($.raw(name));
         $sidebar_upload_file_form.find('#attachment_folder_id').append($option.clone());
         $sidebar_upload_image_form.find('#image_folder_id').append($option.clone());
         $wiki_sidebar_select_folder_dialog.find('.folder_id').append($option.clone());
@@ -209,7 +232,9 @@ define([
           var root_folder_id;
           for(var idx in data.folders) {
             var folder = data.folders[idx].folder;
-            folders[folder.id] = folder;
+            // merge placeholder (if any) with actual content
+            folders[folder.id] = $.extend(folder, folders[folder.id]);
+
             if(!folder.parent_folder_id) {
               root_folder_id = folder.id;
               continue;
@@ -228,6 +253,9 @@ define([
     },
     init: function() {
       wikiSidebar.inited = true;
+
+      UsageRights.render('#usage-rights');
+
       $editor_tabs.find("#pages_accordion a.add").click(function(event){
         event.preventDefault();
         $editor_tabs.find('#new_page_drop_down').slideToggle("fast", function() {
@@ -238,7 +266,15 @@ define([
       $editor_tabs.find(".upload_new_image_link").click(function(event) {
         event.preventDefault();
         wikiSidebar.loadFolders();
-        $sidebar_upload_image_form.slideToggle('fast');
+        $sidebar_upload_image_form.slideToggle('fast', function(){
+          var $imageForm = $('#sidebar_upload_image_form');
+          if($imageForm.is(":visible")){
+            $imageForm.find('select').first().focus();
+            $(event.currentTarget).attr('aria-label', I18n.t('image_form.expanded', 'Click to toggle the new image form (expanded)'));
+          }else{
+            $(event.currentTarget).attr('aria-label', I18n.t('image_form.collapsed', 'Click to toggle the new image form (collapsed)'));
+          }
+        });
       });
       $editor_tabs.find(".find_new_image_link").click(function(event) {
         event.preventDefault();
@@ -269,8 +305,21 @@ define([
               } else if (node.hasClass('node')) {
                 node.children('.sign').click();
               }
+            },
+            onEnter: function (event, node){
+              if (node.hasClass('leaf') || node.hasClass('file')) {
+                wikiSidebar.fileSelected(node);
+              } else if (node.hasClass('node')) {
+                node.children('.sign').click();
+              }
             }
           });
+
+          $node = $tree1.find('.folder').first();
+          $tree1.attr('aria-activedescendant', $node.attr('id'));
+          $tree1.find('[aria-selected="true"]').attr('aria-selected', 'false');
+          $node.attr('aria-selected', 'true');
+
         }
         // defer setting up the <img>es until we click the "images" tab
         if (ui.panel.id === 'editor_tabs_4' && !$image_list.hasClass('initialized')) {
@@ -305,10 +354,10 @@ define([
 
       $("#new_page_drop_down").submit(function(event){
         event.preventDefault();
-        var pageName = $.trim($("#new_page_name").val()).replace(/\s/g, '-').toLowerCase();
+        var pageName = encodeURIComponent($("#new_page_name").val());
         wikiSidebar.editor.editorBox('create_link', {
-          title: $("#new_page_name").val(),
-          url: $("#new_page_url_prefix").val()+ "/" + pageName
+          title: htmlEscape($("#new_page_name").val()),
+          url: $("#new_page_url_prefix").val()+ "/" + pageName + "?titleize=0"
         });
         $('#new_page_drop_down').slideUp("fast");
         $("#new_page_name").val("");
@@ -579,6 +628,7 @@ define([
           $sidebar_upload_file_form.slideUp(function() {
             $sidebar_upload_file_form.find(".uploading").hide();
           });
+          UsageRights.setFileUsageRights(data.attachment);
           wikiSidebar.fileAdded(data.attachment, true, function(node) {
             wikiSidebar.fileSelected(node);
           });

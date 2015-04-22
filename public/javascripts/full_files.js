@@ -28,7 +28,7 @@ define([
   'jquery.ajaxJSON' /* ajaxJSON */,
   'jquery.doc_previews' /* loadDocPreview */,
   'jquery.inst_tree' /* instTree */,
-  'jquery.instructure_date_and_time' /* parseFromISO */,
+  'jquery.instructure_date_and_time' /* datetimeString */,
   'jquery.instructure_forms' /* formSubmit, handlesHTML5Files, ajaxFileUpload, fileData, fillFormData, formErrors */,
   'jqueryui/dialog',
   'jquery.instructure_misc_helpers' /* replaceTags, /\$\.underscore/ */,
@@ -40,9 +40,12 @@ define([
   'media_comments' /* mediaComment */,
   'vendor/jquery.scrollTo' /* /\.scrollTo/ */,
   'jqueryui/droppable' /* /\.droppable/ */,
-  'jqueryui/progressbar' /* /\.progressbar/ */,
-  'vendor/scribd.view' /* scribd */
+  'jqueryui/progressbar' /* /\.progressbar/ */
 ], function(_, INST, I18n, $, htmlEscape) {
+
+  if(typeof ENV.contexts === "string"){
+    ENV.contexts = $.parseJSON(ENV.contexts);
+  }
 
   var files = {};
   var fileStructureData = [];
@@ -64,15 +67,15 @@ define([
         $files_content.prepend($swfupload_holder);
         files.clearDataCache.cacheIndex = 0;
 
-        for(var idx in contexts) {
+        for(var idx in ENV.contexts) {
           var obj = {
-            context: contexts[idx],
-            context_name: contexts[idx].name,
-            context_string: contexts[idx].asset_string
+            context: ENV.contexts[idx],
+            context_name: ENV.contexts[idx].name,
+            context_string: ENV.contexts[idx].asset_string
           };
-          if(contexts[idx].asset_string) {
-            var context_type = contexts[idx].asset_string.replace(/_\d+$/, '');
-            obj[context_type] = contexts[idx];
+          if(ENV.contexts[idx].asset_string) {
+            var context_type = ENV.contexts[idx].asset_string.replace(/_\d+$/, '');
+            obj[context_type] = ENV.contexts[idx];
           }
           fileStructureData.push([
             obj, {}
@@ -189,7 +192,7 @@ define([
                       importFailed(zfi.data.errors);
                     } else if(zfi && zfi.workflow_state == 'imported') {
                       $progress.progressbar('value', 100);
-                      $dialog.append(I18n.t('messages.extraction_complete', "Extraction complete!  Updating..."));
+                      $dialog.append(htmlEscape(I18n.t('messages.extraction_complete', "Extraction complete!  Updating...")));
                       files.refreshContext(folder.context_string, function() {
                         $dialog.dialog('close');
                       });
@@ -584,6 +587,7 @@ define([
           $(ui.helper).find(".header .sub_header").html("&nbsp;");
         }
       },
+      // xsslint jqueryObject.method breadcrumb
       breadcrumb: function() {
         var folders = location.hash.substring(1).replace(/\/\//g, "\\").split("/");
         var $crumbs = $("<div/>");
@@ -973,7 +977,7 @@ define([
 
           $content.find(".lock_item_link").showIf(!data.currently_locked);
           $content.find(".unlock_item_link").showIf(data.currently_locked);
-          $content.find(".preview_item_link").showIf(data.scribd_doc || data.content_type.match(/image/) || (data.content_type.match(/(video|audio)/) && data.media_entry_id));
+          $content.find(".preview_item_link").showIf(data.content_type.match(/image/) || (data.content_type.match(/(video|audio)/) && data.media_entry_id));
           // Need to be careful on this one... we can't let students turn in a
           // file and then edit it after the fact...
           $content.find(".edit_item_content_link_holder").showIf($content.hasClass('editable_folder_item') && data.context_type != 'User' && ($content.hasClass('text') || $content.hasClass('html') || $content.hasClass('code')));
@@ -1410,11 +1414,11 @@ define([
             if(node.hasClass('node')) {
               var folder_url = $.replaceTags($("." + data.context_string + "_folder_url").attr('href'), 'id', data.id);
               var cancelled = false;
-              var $no_content = $("<li class='message'>" + I18n.t('messages.folder_empty', "Nothing in this Folder") + "</li>");
+              var $no_content = $("<li class='message'>" + htmlEscape(I18n.t('messages.folder_empty', "Nothing in this Folder")) + "</li>");
               if(node.hasClass('folder')) {
                 if(!data || !data.permissions || !data.permissions.read_contents) {
                   $files_content.find(".content_panel:last")
-                                .after("<li class='message'>" + I18n.t('messages.access_denied', "You cannot read the contents of this folder.") + "</li>");
+                                .after("<li class='message'>" + htmlEscape(I18n.t('messages.access_denied', "You cannot read the contents of this folder.")) + "</li>");
                   cancelled = true;
                 } else {
                   // add a control panel to the top for adding files, folders to this
@@ -1436,8 +1440,8 @@ define([
                   $(".download_zip_link").attr('href', download_folder_url);
                   $(".upload_zip_link").attr('href', $("." + data.context_string + "_import_url").attr('href') + "?return_to=" + encodeURIComponent(location.href) + "&folder_id=" + data.id);
 
-                  data.unlock_at_string = $.parseFromISO(data.unlock_at).datetime_formatted;
-                  data.lock_at_string = $.parseFromISO(data.lock_at).datetime_formatted;
+                  data.unlock_at_string = $.datetimeString(data.unlock_at);
+                  data.lock_at_string = $.datetimeString(data.lock_at);
                   $panel.find(".lock_after").showIf(data.lock_at);
                   $panel.find(".lock_until").showIf(data.unlock_at);
                   $panel.find(".currently_locked_box").showIf(data.currently_locked);
@@ -1522,8 +1526,8 @@ define([
                 // show a file control panel with file size, download link, etc.
                 var $panel = $("#file_panel");
                 var $preview = null;
-                data.unlock_at_string = $.parseFromISO(data.unlock_at).datetime_formatted;
-                data.lock_at_string = $.parseFromISO(data.lock_at).datetime_formatted;
+                data.unlock_at_string = $.datetimeString(data.unlock_at);
+                data.lock_at_string = $.datetimeString(data.lock_at);
                 $panel.find(".lock_after").showIf(data.lock_at);
                 $panel.find(".lock_until").showIf(data.unlock_at);
                 $panel.find(".currently_locked_box").showIf(data.currently_locked);
@@ -1547,7 +1551,7 @@ define([
                   $panel.addClass('panel_locked');
                 } else if (data && data.permissions && data.permissions.download && $.isPreviewable(data.content_type)) {
                   // show an inline preview
-                  $preview = $("#content_templates .file_scribd_preview").clone(true);
+                  $preview = $("#content_templates .file_preview_container").clone(true);
                   $preview.append("<div id='doc_preview_holder'/>");
                 } else {
                   // show a few more details about the file, preview if possible
@@ -1581,35 +1585,18 @@ define([
                       mimeType: data.content_type,
                       attachment_id: data.id,
                       height: '100%',
-                      crocodoc_session_url: data.crocodocSession,
-                      scribd_doc_id: data.scribd_doc && data.scribd_doc.attributes && data.scribd_doc.attributes.doc_id,
-                      scribd_access_key: data.scribd_doc && data.scribd_doc.attributes && data.scribd_doc.attributes.access_key,
+                      crocodoc_session_url: data.crocodoc_session_url,
+                      canvadoc_session_url: data.canvadoc_session_url,
                       attachment_view_inline_ping_url: files.viewInlinePingUrl(data.context_string, data.id),
                       attachment_scribd_render_url: files.scribdRenderUrl(data.context_string, data.id),
                       attachment_preview_processing: data.workflow_state == 'pending_upload' || data.workflow_state == 'processing'
                     });
                   };
-                  if (data.permissions && data.permissions.download && $.isPreviewable(data.content_type)) {
-                    if (data['crocodoc_available?'] && !data.crocodocSession) {
-                      $preview.disableWhileLoading(
-                        $.ajaxJSON(
-                          '/attachments/' + data.id + '/crocodoc_sessions/',
-                          'POST',
-                          {annotations: false},
-                          function(response) {
-                            data.crocodocSession = response.session_url;
-                            showPreview();
-                          },
-                          function() {
-                            data['crocodoc_available?'] = false;
-                            showPreview();
-                          }
-                        )
-                      );
-                    }
-                    else {
-                      showPreview();
-                    }
+                  if (data.canvadoc_session_url || data.crocodoc_session_url) {
+                    showPreview();
+                  }
+                  else if (data.permissions && data.permissions.download && $.isPreviewable(data.content_type)) {
+                    showPreview();
                   }
                 }
                 $(window).triggerHandler('resize');
@@ -1643,6 +1630,34 @@ define([
         event.preventDefault();
         INST.downloadFolderFiles($(this).find(".download_zip_link").attr('href'));
       });
+
+      /**
+       * swaps in a version of tinymce that will be *very* loose
+       * with what elements it strips out as invalid. The *[*]
+       * below basically means "any elements with any attributes are ok"
+       * for this editor.
+       *
+       * @private
+       * @param {jQuery Object} textarea the DOM element to wrap
+       *    tinymce around.
+       */
+      function initTiny(textarea){
+        textarea.editorBox({
+          tinyOptions: {
+            valid_elements: '*[*]',
+            extended_valid_elements: '*[*]',
+            plugins: "autolink,media,paste,table",
+            external_plugins: {
+              "instructure_image": "/javascripts/tinymce_plugins/instructure_image/plugin.js",
+              "instructure_links": "/javascripts/tinymce_plugins/instructure_links/plugin.js",
+              "instructure_equation": "/javascripts/tinymce_plugins/instructure_equation/plugin.js",
+              "instructure_equella": "/javascripts/tinymce_plugins/instructure_equella/plugin.js",
+              "instructure_external_tools": "/javascripts/tinymce_plugins/instructure_external_tools/plugin.js"
+            }
+          }
+        });
+        textarea.data('tinyIsVisible', !textarea.data('tinyIsVisible'));
+      }
 
       $(".folder_item .edit_item_content_link").click(function(event) {
         event.preventDefault();
@@ -1705,14 +1720,7 @@ define([
                   setTimeout(function(){
                     $dialog.find('.html_edit_warning').fadeIn();
                   }, 250);
-                  $textarea.editorBox({
-                    tinyOptions: {
-                      valid_elements: '*[*]',
-                      extended_valid_elements: '*[*]',
-                      plugins: "autolink,instructure_external_tools,instructure_contextmenu,instructure_links,instructure_image,instructure_equation,instructure_equella,media,paste,table,inlinepopups"
-                    }
-                  });
-                  $textarea.data('tinyIsVisible', !tinyIsVisible);
+                  initTiny($textarea);
                 }
               });
             }
@@ -1892,8 +1900,7 @@ define([
         $form.find("form")
              .attr('action', $("#file_context_links ." + 
                                 itemData.context_string + 
-                                "_attachments_url").attr('href') + 
-                                ".text");
+                                "_attachments_url").attr('href'));
         $form.mouseover();
         $form.find(":text:first")
              .focus()
@@ -2023,8 +2030,8 @@ define([
         $("#lock_item_dialog form").hide();
 
         $form.show();
-        data.lock_at = $.parseFromISO(data.last_lock_at).datetime_formatted;
-        data.unlock_at = $.parseFromISO(data.last_unlock_at).datetime_formatted;
+        data.lock_at = $.datetimeString(data.last_lock_at, {localized: false});
+        data.unlock_at = $.datetimeString(data.last_unlock_at, {localized: false});
         data.locked = (!data.lock_at && !data.unlock_at) ? '1' : '0';
         $("#lock_item_dialog").fillTemplateData({data: {name: data.name}});
 
@@ -2151,6 +2158,9 @@ define([
           cancelImg: '/images/blank.png',
           onInit: function() {
             $add_file_link.text(I18n.t('links.add_files', "Add Files")).triggerHandler('show');
+          },
+          onFallback: function() {
+            $swfupload_holder.hide(); // hide to allow click-through to Add File link when Flash is unavailable
           },
           onSelect: fileUpload.swfFileQueue,
           onCancel: fileUpload.swfCancel,
@@ -2348,7 +2358,8 @@ define([
         'attachment[filename]': file.name,
         'attachment[context_code]': folder.context_string,
         'no_redirect': true,
-        'attachment[duplicate_handling]': file.duplicate_handling
+        'attachment[duplicate_handling]': file.duplicate_handling,
+        'default_content_type': 'application/octet-stream'
       };
       fileUpload.updateUploadCount();
       $.ajaxJSON('/files/pending', 'POST', post_params, function(data) {

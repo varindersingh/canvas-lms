@@ -1,9 +1,10 @@
 define [
+  'jquery'
   'underscore'
   'Backbone'
   'compiled/views/quizzes/QuizItemGroupView'
   'jst/quizzes/IndexView'
-], (_, Backbone, QuizItemGroupView, template) ->
+], ($, _, Backbone, QuizItemGroupView, template) ->
 
   class IndexView extends Backbone.View
     template: template
@@ -17,6 +18,7 @@ define [
 
     events:
       'keyup #searchTerm': 'keyUpSearch'
+      'mouseup #searchTerm': 'keyUpSearch' #ie10 x-close workaround
 
     initialize: ->
       super
@@ -26,25 +28,17 @@ define [
       @options.hasOpenQuizzes        = @openView.collection.length > 0
       @options.hasSurveys            = @surveyView.collection.length > 0
 
-    collections: ->
+    views: ->
       [
-        @options.assignmentView.collection
-        @options.openView.collection
-        @options.surveyView.collection
+        @options.assignmentView
+        @options.openView
+        @options.surveyView
       ]
 
-    keyUpSearch: =>
-      clearTimeout @onInputTimer
-      @onInputTimer = setTimeout @filterResults, 200
+    keyUpSearch: _.debounce ->
+      @filterResults()
+    , 200
 
     filterResults: =>
-      term = $('#searchTerm').val()
-
-      _.each @collections(), (collection) =>
-        collection.each (model) =>
-          model.set('hidden', !@filter(model, term))
-
-    filter: (model, term) =>
-      return true unless term
-      regex = new RegExp(term, 'ig')
-      model.get('title').match(regex)
+      _.each @views(), (view) =>
+        view.filterResults($('#searchTerm').val())

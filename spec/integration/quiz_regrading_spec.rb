@@ -1,11 +1,11 @@
 require 'spec_helper'
-require 'lib/quiz_regrading'
+
 describe "QuizRegrading" do
 
   def create_quiz_question!(data)
     question = @quiz.quiz_questions.create!
     data.merge!(:id => question.id)
-    question.write_attribute(:question_data,data)
+    question.write_attribute(:question_data, data.to_hash)
     question.save!
     question
   end
@@ -18,7 +18,7 @@ describe "QuizRegrading" do
       "question_#{@multiple_answers_question.id}_answer_6" => "0",
       "question_#{@multiple_answers_question.id}_answer_7" => "0"
     }.with_indifferent_access
-    @submission.grade_submission
+    Quizzes::SubmissionGrader.new(@submission).grade_submission
     @submission.save!
   end
 
@@ -34,8 +34,8 @@ describe "QuizRegrading" do
   before do
     course_with_student_logged_in(active_all: true)
     quiz_model(course: @course)
-    @regrade = @quiz.quiz_regrades.find_or_create_by_quiz_id_and_quiz_version(@quiz.id,@quiz.version_number) { |qr| qr.user_id = @student.id }
-    @regrade.should_not be_new_record
+    @regrade = @quiz.quiz_regrades.where(quiz_id: @quiz.id, quiz_version: @quiz.version_number).first_or_create(user: @student)
+    expect(@regrade).not_to be_new_record
     @true_false_question = create_quiz_question!({
       :points_possible => 1,
       :question_type => 'true_false_question',
@@ -68,37 +68,63 @@ describe "QuizRegrading" do
     @mcq_qqr = @regrade.quiz_question_regrades.create!(quiz_question_id: @multiple_choice_question.id, regrade_option: 'no_regrade')
     @ttf_qqr = @regrade.quiz_question_regrades.create!(quiz_question_id: @true_false_question.id, regrade_option: 'no_regrade')
     @quiz.generate_quiz_data
-    @quiz.workflow_state = 'available'; @quiz.without_versioning { @quiz.save! }
+    @quiz.workflow_state = 'available'
+    @quiz.without_versioning { @quiz.save! }
     @submission = @quiz.generate_submission(@student)
     reset_submission_data!
     @submission.save!
-    @submission.score.should == 0.5
+    expect(@submission.score).to eq 0.5
   end
 
   it 'succesfully regrades the submissions and updates the scores' do
     set_regrade_option!('full_credit')
-    QuizRegrader.regrade!(quiz: @quiz)
-    @submission.reload.score.should == 3
+    Quizzes::QuizRegrader::Regrader.regrade!(quiz: @quiz)
+    expect(@submission.reload.score).to eq 3
 
     set_regrade_option!('current_correct_only')
     data = @true_false_question.question_data
     data[:answers].first[:weight]  = 0
     data[:answers].second[:weight]  = 100
-    @true_false_question.write_attribute(:question_data, data)
+    @true_false_question.write_attribute(:question_data, data.to_hash)
     @true_false_question.save!
     data = @multiple_choice_question.question_data
     data[:answers].first[:weight] = 0
     data[:answers].second[:weight]  = 100
-    @multiple_choice_question.write_attribute(:data, data)
+    @multiple_choice_question.write_attribute(:question_data, data.to_hash)
     @multiple_choice_question.save!
     data = @multiple_answers_question.reload.question_data
     data[:answers].second[:weight]  = 0
-    @multiple_answers_question.write_attribute(:data, data)
+    @multiple_answers_question.write_attribute(:question_data, data.to_hash)
     @multiple_answers_question.save!
     @quiz.reload
 
-    QuizRegrader.regrade!(quiz: @quiz)
-    @submission.reload.score.should == 3
+    Quizzes::QuizRegrader::Regrader.regrade!(quiz: @quiz)
+    expect(@submission.reload.score).to eq 3
+  end
+
+  it 'does not expose the question names' do
+    set_regrade_option!('current_correct_only')
+
+    data = @true_false_question.question_data
+    data[:question_name] = 'foo'
+    @true_false_question.question_data = data.to_hash
+    @true_false_question.save!
+
+    data = @multiple_choice_question.question_data
+    data[:question_name] = 'bar'
+    @multiple_choice_question.question_data = data.to_hash
+    @multiple_choice_question.save!
+
+    @quiz.generate_quiz_data
+    @quiz.save!
+
+    Quizzes::QuizRegrader::Regrader.regrade!(quiz: @quiz)
+
+    @submission.reload
+    expect(@quiz.quiz_data[0][:question_name]).to eq 'foo'
+    expect(@quiz.quiz_data[1][:question_name]).to eq 'bar'
+    expect(@submission.quiz_data[0][:question_name]).to eq 'Question 1'
+    expect(@submission.quiz_data[1][:question_name]).to eq 'Question 2'
   end
 
 end

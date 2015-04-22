@@ -20,41 +20,43 @@ define([
   'i18n!content_locks',
   'jquery' /* $ */,
   'str/htmlEscape',
-  'jquery.instructure_date_and_time' /* parseFromISO */,
+  'jquery.instructure_date_and_time' /* datetimeString */,
   'jqueryui/dialog'
 ], function(INST, I18n, $, htmlEscape) {
 
   INST.lockExplanation = function(data, type) {
     // Any additions to this function should also be added to similar logic in ApplicationController.rb
     if(data.lock_at) {
+      var lock_at = $.datetimeString(data.lock_at)
       switch (type) {
         case "quiz":
-          return I18n.t('messages.quiz_locked_at', "This quiz was locked %{at}.", {at: $.parseFromISO(data.lock_at).datetime_formatted});
+          return I18n.t('messages.quiz_locked_at', "This quiz was locked %{at}.", {at: lock_at});
         case "assignment":
-          return I18n.t('messages.assignment_locked_at', "This assignment was locked %{at}.", {at: $.parseFromISO(data.lock_at).datetime_formatted});
+          return I18n.t('messages.assignment_locked_at', "This assignment was locked %{at}.", {at: lock_at});
         case "topic":
-          return I18n.t('messages.topic_locked_at', "This topic was locked %{at}.", {at: $.parseFromISO(data.lock_at).datetime_formatted});
+          return I18n.t('messages.topic_locked_at', "This topic was locked %{at}.", {at: lock_at});
         case "file":
-          return I18n.t('messages.file_locked_at', "This file was locked %{at}.", {at: $.parseFromISO(data.lock_at).datetime_formatted});
+          return I18n.t('messages.file_locked_at', "This file was locked %{at}.", {at: lock_at});
         case "page":
-          return I18n.t('messages.page_locked_at', "This page was locked %{at}.", {at: $.parseFromISO(data.lock_at).datetime_formatted});
+          return I18n.t('messages.page_locked_at', "This page was locked %{at}.", {at: lock_at});
         default:
-          return I18n.t('messages.content_locked_at', "This content was locked %{at}.", {at: $.parseFromISO(data.lock_at).datetime_formatted});
+          return I18n.t('messages.content_locked_at', "This content was locked %{at}.", {at: lock_at});
       }
     } else if(data.unlock_at) {
+      var unlock_at = $.datetimeString(data.unlock_at)
       switch (type) {
         case "quiz":
-          return I18n.t('messages.quiz_locked_until', "This quiz is locked until %{date}.", {date: $.parseFromISO(data.unlock_at).datetime_formatted});
+          return I18n.t('messages.quiz_locked_until', "This quiz is locked until %{date}.", {date: unlock_at});
         case "assignment":
-          return I18n.t('messages.assignment_locked_until', "This assignment is locked until %{date}.", {date: $.parseFromISO(data.unlock_at).datetime_formatted});
+          return I18n.t('messages.assignment_locked_until', "This assignment is locked until %{date}.", {date: unlock_at});
         case "topic":
-          return I18n.t('messages.topic_locked_until', "This topic is locked until %{date}.", {date: $.parseFromISO(data.unlock_at).datetime_formatted});
+          return I18n.t('messages.topic_locked_until', "This topic is locked until %{date}.", {date: unlock_at});
         case "file":
-          return I18n.t('messages.file_locked_until', "This file is locked until %{date}.", {date: $.parseFromISO(data.unlock_at).datetime_formatted});
+          return I18n.t('messages.file_locked_until', "This file is locked until %{date}.", {date: unlock_at});
         case "page":
-          return I18n.t('messages.page_locked_until', "This page is locked until %{date}.", {date: $.parseFromISO(data.unlock_at).datetime_formatted});
+          return I18n.t('messages.page_locked_until', "This page is locked until %{date}.", {date: unlock_at});
         default:
-          return I18n.t('messages.content_locked_until', "This content is locked until %{date}.", {date: $.parseFromISO(data.unlock_at).datetime_formatted});
+          return I18n.t('messages.content_locked_until', "This content is locked until %{date}.", {date: unlock_at});
       }
     } else if(data.context_module) {
       var html = '';
@@ -80,10 +82,10 @@ define([
       }
       if ($("#context_modules_url").length > 0) {
         html += "<br/>";
-        html += "<a href='" + $("#context_modules_url").attr('href') + "'>";
-        html += I18n.t('messages.visit_modules_page_for_details', "Visit the modules page for information on how to unlock this content.");
+        html += "<a href='" + htmlEscape($("#context_modules_url").attr('href')) + "'>";
+        html += htmlEscape(I18n.t('messages.visit_modules_page_for_details', "Visit the modules page for information on how to unlock this content."));
         html += "</a>";
-        return html;
+        return $.raw(html);
       }
     }
     else {
@@ -111,7 +113,7 @@ define([
         var data = $(this).data('lock_reason');
         var type = data.type;
         var $reason = $("<div/>");
-        $reason.html(INST.lockExplanation(data, type));
+        $reason.html(htmlEscape(INST.lockExplanation(data, type)));
         var $dialog = $("#lock_reason_dialog");
         if($dialog.length === 0) {
           $dialog = $("<div/>").attr('id', 'lock_reason_dialog');

@@ -31,6 +31,13 @@ define [
     wikiPageEditView.render()
     ok @attachWikiEditorStub.calledOnce, 'Attached wikisidebar to body'
 
+  test 'renders escaped angle brackets properly', ->
+    body = "<p>&lt;E&gt;</p>"
+    wikiPage = new WikiPage body: body
+    view = new WikiPageEditView model: wikiPage
+    view.render()
+    equal view.$wikiPageBody.val(), body
+
 
   module 'WikiPageEditView:UnsavedChanges'
   setupUnsavedChangesTest = (test, attributes) ->
@@ -113,11 +120,11 @@ define [
   test 'warn on leaving if unsaved changes', ->
     setupUnsavedChangesTest(this, title: 'nooo', body: 'blargh')
 
-    strictEqual $(window).triggerHandler('beforeunload'), undefined, "No warning if not changed"
+    strictEqual @view.onUnload({}), undefined, "No warning if not changed"
 
     @titleInput.val('mwhaha')
 
-    ok $(window).triggerHandler('beforeunload') != undefined, "Returns warning if changed"
+    ok @view.onUnload({}) isnt undefined, "Returns warning if changed"
 
 
   module 'WikiPageEditView:Validate'

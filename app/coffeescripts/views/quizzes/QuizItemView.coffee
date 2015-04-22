@@ -3,9 +3,11 @@ define [
   'jquery'
   'underscore'
   'Backbone'
+  'compiled/views/PublishIconView'
+  'compiled/views/assignments/DateDueColumnView'
+  'compiled/views/assignments/DateAvailableColumnView'
   'jst/quizzes/QuizItemView'
-  'jst/_vddTooltip'
-], (I18n, $, _, Backbone, template) ->
+], (I18n, $, _, Backbone, PublishIconView, DateDueColumnView, DateAvailableColumnView, template) ->
 
   class ItemView extends Backbone.View
 
@@ -14,7 +16,9 @@ define [
     tagName:   'li'
     className: 'quiz'
 
-    @child 'publishIconView', '[data-view=publish-icon]'
+    @child 'publishIconView',         '[data-view=publish-icon]'
+    @child 'dateDueColumnView',       '[data-view=date-due]'
+    @child 'dateAvailableColumnView', '[data-view=date-available]'
 
     events:
       'click': 'clickRow'
@@ -25,8 +29,21 @@ define [
       multipleDates: I18n.t('multiple_due_dates', 'Multiple Dates')
 
     initialize: (options) ->
+      @initializeChildViews()
       @observeModel()
       super
+
+    initializeChildViews: ->
+      @publishIconView = false
+
+      if @canManage()
+        @publishIconView = new PublishIconView(model: @model)
+
+      @dateDueColumnView       = new DateDueColumnView(model: @model)
+      @dateAvailableColumnView = new DateAvailableColumnView(model: @model)
+
+    afterRender: ->
+      this.$el.toggleClass('quiz-loading-overrides', !!@model.get('loadingOverrides'))
 
     # make clicks follow through to url for entire row
     clickRow: (e) =>
@@ -50,13 +67,21 @@ define [
       @$el.remove()
 
     observeModel: ->
-      @model.on('change:published', @upatePublishState)
+      @model.on('change:published', @updatePublishState)
+      @model.on('change:loadingOverrides', @render)
 
-    upatePublishState: =>
+    updatePublishState: =>
       @$('.ig-row').toggleClass('ig-published', @model.get('published'))
+
+    canManage: ->
+      ENV.PERMISSIONS.manage
 
     toJSON: ->
       base = _.extend(@model.toJSON(), @options)
+      base.quiz_menu_tools = ENV.quiz_menu_tools
+      _.each base.quiz_menu_tools, (tool) =>
+        tool.url = tool.base_url + "&quizzes[]=#{@model.get("id")}"
+
       if @model.get("multiple_due_dates")
         base.selector  = @model.get("id")
         base.link_text = @messages.multipleDates

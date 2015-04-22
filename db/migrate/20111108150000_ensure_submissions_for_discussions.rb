@@ -1,5 +1,3 @@
-require 'skip_callback'
-
 class EnsureSubmissionsForDiscussions < ActiveRecord::Migration
   def self.up
     # entries from graded topics where the poster is enrolled as a student in
@@ -33,7 +31,7 @@ class EnsureSubmissionsForDiscussions < ActiveRecord::Migration
     touched_user_ids = [].to_set
 
     # don't touch the user on each submission, we'll do them in bulk later
-    Submission.skip_callbacks(:touch_user) do
+    Submission.suspend_callbacks(:touch_user) do
       entries.each do |entry|
         # streamlined entry.discussiont_topic.ensure_submission(entry.user)
         assignment = Assignment.find_by_sql(<<-SQL).first
@@ -61,7 +59,7 @@ class EnsureSubmissionsForDiscussions < ActiveRecord::Migration
         SQL
         group_id = group && group.id
 
-        homework = Submission.find_or_initialize_by_assignment_id_and_user_id(assignment.id, entry.user_id)
+        homework = Submission.where(assignment_id: assignment.id, user_id: entry.user_id).first_or_initialize
         homework.grade_matches_current_submission = homework.score ? false : true
         homework.attributes = {
           :attachment => nil,

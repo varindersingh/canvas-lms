@@ -25,19 +25,19 @@ describe 'DataFixup::FilterPageViewUrlParams' do
       Setting.set('filter_page_view_url_params_batch_size', '2')
       3.times { page_view_model() }
       @pv = page_view_model(url: 'http://canvas.example.com/api/v1/courses/1?access_token=xyz')
-      @pv.reload.read_attribute(:url).should == 'http://canvas.example.com/api/v1/courses/1?access_token=xyz'
+      expect(@pv.reload.read_attribute(:url)).to eq 'http://canvas.example.com/api/v1/courses/1?access_token=xyz'
       DataFixup::FilterPageViewUrlParams.run
-      @pv.reload.read_attribute(:url).should == 'http://canvas.example.com/api/v1/courses/1?access_token=[FILTERED]'
+      expect(@pv.reload.read_attribute(:url)).to eq 'http://canvas.example.com/api/v1/courses/1?access_token=[FILTERED]'
     end
   end
 
   describe "db" do
-    it_should_behave_like 'DataFixup::FilterPageViewUrlParams'
+    include_examples 'DataFixup::FilterPageViewUrlParams'
   end
 
   describe "cassandra" do
-    it_should_behave_like "cassandra page views"
-    it_should_behave_like 'DataFixup::FilterPageViewUrlParams'
+    include_examples "cassandra page views"
+    include_examples 'DataFixup::FilterPageViewUrlParams'
   end
 end
 

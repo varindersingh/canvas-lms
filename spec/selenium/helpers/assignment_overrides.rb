@@ -8,10 +8,6 @@ module AssignmentOverridesSeleniumHelper
     replace_content(f('#assignment_name'), title.to_s)
   end
 
-  def toggle_advanced_options
-    f('#assignment_toggle_advanced_options').click
-  end
-
   def fill_assignment_overrides
       f('.due-date-overrides [name="due_at"]').
         send_keys(due_at.strftime('%b %-d, %y'))
@@ -25,12 +21,24 @@ module AssignmentOverridesSeleniumHelper
     expect_new_page_load { submit_form('#edit_assignment_form') }
   end
 
+  def due_at
+    Time.zone.now
+  end
+
+  def unlock_at
+    Time.zone.now.advance(days: -2)
+  end
+
+  def lock_at
+    Time.zone.now.advance(days: 4)
+  end
+
   def compare_assignment_times(a)
-    a.due_at.strftime('%b %-d, %y').should == due_at.to_date.
+    expect(a.due_at.strftime('%b %-d, %y')).to eq due_at.to_date.
       strftime('%b %-d, %y')
-    a.unlock_at.strftime('%b %-d, %y').should == unlock_at.to_date.
+    expect(a.unlock_at.strftime('%b %-d, %y')).to eq unlock_at.to_date.
       strftime('%b %-d, %y')
-    a.lock_at.strftime('%b %-d, %y').should == lock_at.to_date.
+    expect(a.lock_at.strftime('%b %-d, %y')).to eq lock_at.to_date.
       strftime('%b %-d, %y')
   end
 
@@ -86,12 +94,15 @@ module AssignmentOverridesSeleniumHelper
   end
 
   def add_due_date_override(assignment)
+    user = @user
     new_section = @course.course_sections.create!(:name => 'New Section')
+    student_in_section(new_section)
     override = assignment.assignment_overrides.build
     override.set = new_section
-    override.due_at = Time.zone.now + 1.day
+    override.due_at = Time.zone.now.advance(days:1)
     override.due_at_overridden = true
     override.save!
+    @user = user
   end
 
 end

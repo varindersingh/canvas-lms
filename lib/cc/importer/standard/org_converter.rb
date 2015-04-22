@@ -78,6 +78,13 @@ module CC::Importer::Standard
                     :linked_resource_id => resource[:migration_id],
                     :linked_resource_title => get_node_val(item_node, 'title'),
             }
+          when /\Aassignment/
+            item = {
+                    :indent =>indent,
+                    :linked_resource_type => 'ASSIGNMENT',
+                    :linked_resource_id => resource[:migration_id],
+                    :linked_resource_title => get_node_val(item_node, 'title'),
+            }
           when /\Aimswl/
             item = {:indent => indent, :linked_resource_type => 'URL'}
             item[:linked_resource_title] = get_node_val(item_node, 'title')
@@ -113,6 +120,10 @@ module CC::Importer::Standard
             item = {:indent => indent, :linked_resource_type => 'FILE_TYPE'}
             item[:linked_resource_id] = item_node['identifierref']
             item[:linked_resource_title] = get_node_val(item_node, 'title')
+        end
+
+        if item && resource[:intended_user_role] == 'Instructor'
+          item[:workflow_state] = 'unpublished'
         end
       end
       

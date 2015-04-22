@@ -1,7 +1,9 @@
 require File.expand_path(File.dirname(__FILE__) + '/common')
 
+require 'nokogiri'
+
 describe "user_content" do
-  it_should_behave_like "in-process server selenium tests"
+  include_examples "in-process server selenium tests"
 
   context "as a student" do
 
@@ -25,30 +27,29 @@ describe "user_content" do
       wait_for_ajaximations
       name = ff(".user_content_iframe").first.attribute('name')
       in_frame(name) do
-        keep_trying_until { driver.current_url.should match("/object_snippet") }
+        keep_trying_until { expect(driver.current_url).to match("/object_snippet") }
         html = Nokogiri::HTML(driver.page_source)
         obj = html.at_css('object')
-        obj.should_not be_nil
-        obj['data'].should == '/javascripts/swfobject/test.swf'
+        expect(obj).not_to be_nil
+        expect(obj['data']).to eq '/javascripts/swfobject/test.swf'
       end
     end
 
     it "should iframe calendar json requests" do
       e = factory_with_protected_attributes(CalendarEvent, :context => @course, :title => "super fun party", :description => message_body, :start_at => 5.minutes.ago, :end_at => 5.minutes.from_now)
-      get "/calendar"
+      get "/calendar2"
       wait_for_ajaximations
 
-      ff(".user_content_iframe").size.should == 0
-      event_el = keep_trying_until { f("#event_calendar_event_#{e.id}") }
-      event_el.find_element(:tag_name, 'a').click
-      wait_for_ajax_requests
+      expect(ff(".user_content_iframe").size).to eq 0
+      f('.fc-event').click
+      wait_for_ajaximations
       name = keep_trying_until { ff(".user_content_iframe").first.attribute('name') }
       in_frame(name) do
-        keep_trying_until { driver.current_url.should match("/object_snippet") }
+        keep_trying_until { expect(driver.current_url).to match("/object_snippet") }
         html = Nokogiri::HTML(driver.page_source)
         obj = html.at_css('object')
-        obj.should_not be_nil
-        obj['data'].should == '/javascripts/swfobject/test.swf'
+        expect(obj).not_to be_nil
+        expect(obj['data']).to eq '/javascripts/swfobject/test.swf'
       end
     end
   end

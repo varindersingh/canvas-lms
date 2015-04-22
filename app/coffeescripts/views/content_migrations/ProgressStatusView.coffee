@@ -5,17 +5,16 @@ define [
   class ProgressingStatusView extends Backbone.View
     template: template
     initialize: ->
+      super
       @progress = @model.progressModel
+      @model.on 'change:workflow_state', @render
+      @progress.on 'change:workflow_state', @render
 
     render: ->
-      if statusView = @model.collection.view.getStatusView(@model)
+      if statusView = @model.collection?.view?.getStatusView(@model)
         @$el.html(statusView)
       else
         super
-
-    afterRender: -> 
-      @model.on 'change:workflow_state', @render
-      @progress.on 'change:workflow_state', @render
 
     toJSON: -> 
       json = super

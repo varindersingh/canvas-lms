@@ -5,6 +5,7 @@
   <%= t(:page_title, "My ePortfolios") %>
 <% end %>
 
+<h1 class="screenreader-only"><%= t('headers.eportfolios', "ePortfolios") %></h1>
 <% content_for :right_side do %>
   <div class="rs-margin-lr rs-margin-top">
     <a href="#" class="add_eportfolio_link btn button-sidebar-wide"><i class="icon-add"></i> <%= t('links.create', "Create an ePortfolio") %></a>
@@ -44,7 +45,7 @@ DETAILS
     <%= render :partial => "eportfolio", :collection => @portfolios %>
   </ul>
 <% end %>
-<% form_for Eportfolio.new, :url => eportfolios_path, :html => {:style => "display: none;", :id => "add_eportfolio_form"} do |f| %>
+<%= form_for Eportfolio.new, :url => eportfolios_path, :html => {:style => "display: none;", :id => "add_eportfolio_form"} do |f| %>
 <h2><%= t('headers.add_eportfolio', "Make an ePortfolio") %></h2>
 <table class="formtable">
   <tr>

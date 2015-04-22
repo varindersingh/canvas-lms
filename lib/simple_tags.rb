@@ -26,7 +26,7 @@ module SimpleTags
           wildcard(quoted_table_name + '.tags', tag, :delimiter => ',')
         }
       conditions.empty? ?
-          where("?", false) :
+          none :
           where(conditions.join(options[:mode] == :or ? " OR " : " AND "))
     end
 
@@ -76,7 +76,7 @@ module SimpleTags
       if tag =~ /\A((course|group)_\d+).*/
         ary << $1
       elsif tag =~ /\Asection_(\d+).*/
-        section = CourseSection.find_by_id($1)
+        section = CourseSection.where(id: $1).first
         ary << section.course.asset_string if section
       # TODO: allow user-defined tags, e.g. #foo
       end

@@ -36,6 +36,60 @@ sections and enrollments.
 This option will only affect data created via previous SIS imports. Manually created courses, for
 example, won't be deleted even if they don't appear in the new SIS import.
 
+Diffing Mode
+------------
+
+If your account has a SIS integration that is sending its entire data set on
+each import, rather than just sending what has changed, you can speed up
+the import process by enabling diffing mode. In diffing mode, a
+preprocessing step in Canvas will compare the current SIS import against
+the last successful SIS import with the same *data set identifier*, and
+only apply the difference between the two imports. For instance, if user
+A is created by import 1, and the exact same information is specified
+for user A in import 2, Canvas will mark that nothing has changed for
+that CSV row and skip looking up user A entirely. This can greatly speed
+up SIS imports with thousands of rows that change rarely.
+
+It is important to note that if any SIS data was changed outside of that
+previous CSV import, the changes will not be noticed by the diffing
+code. For example:
+
+  1. Import 1 sets user A state to "active".
+  2. An admin sets user A state to "deleted" either through the Canvas
+     UI, or a non-diff SIS import.
+  3. Import 2 sets user A state to "active" again, and is configured to
+     diff against Import 1.
+  4. Because only the difference between Import 1 and Import 2 is
+     applied, and the user's state is "active" in both CSVs, the user
+     remains deleted.
+
+Diffing mode is enabled by passing the `diffing_data_set_identifier`
+option in the "Import SIS Data" API call. This is a unique, non-changing
+string identifier for the series of SIS imports that will be diffed
+against one another. The string can contain any valid UTF-8, and be up
+to 128 bytes in length. If an account has multiple SIS integrations that
+want to take advantage of diffing, each integration can select a unique
+data set identifier to avoid interfering with each other.
+
+When choosing a data set identifier, it's important to include any
+relevant details to differentiate this data set from other import data
+sets that may come concurrently or later. This might include things such
+as source system, data type, and term id. Some examples of good identifiers:
+
+ * users:fall-2015
+ * source-system-1:all-data:spring-2016
+
+If changes are made to SIS-managed objects outside of the normal import
+process, as in the example given above, it may be necessary to process a SIS
+import with the same data set identifier, but apply the entire import
+rather than applying just the diff.  To enable this mode, set the
+`diffing_remaster_data_set=true` option when creating the import, and it
+will be applied without diffing. The next import for the same data
+set will still diff against that import.
+
+CSV Data Formats
+================
+
 users.csv
 ---------
 
@@ -79,6 +133,23 @@ otherwise) it will <em>not</em> be overwritten</p></td>
 <td>Last name of the user.</td>
 </tr>
 <tr>
+<td>full_name</td>
+<td>text</td>
+<td>Full name of the user. Omit first_name and last_name if this is provided.</td>
+</tr>
+<tr>
+<td>sortable_name</td>
+<td>text</td>
+<td>Sortable name of the user. This is normally inferred from the user's name,
+but you can customize it here.</td>
+</tr>
+<tr>
+<td>short_name</td>
+<td>text</td>
+<td>Display name of the user. This is normally inferred from the user's name,
+but you can customize it here.</td>
+</tr>
+<tr>
 <td>email</td>
 <td>text</td>
 <td>The email address of the user. This might be the same as login_id, but should
@@ -91,6 +162,9 @@ still be provided.</td>
 </tr>
 </table>
 
+<p>The user's name (either first_name and last_name, or full_name) should always
+be provided. Otherwise, the name will be blanked out.</p>
+
 <p>When a student is 'deleted' all of its enrollments will also be deleted and
 they won't be able to log in to the school's account. If you still want the
 student to be able to log in but just not participate, leave the student
@@ -99,10 +173,10 @@ student to be able to log in but just not participate, leave the student
 Sample:
 
 <pre>
-user_id,login_id,password,first_name,last_name,email,status
-01103,bsmith01,,Bob,Smith,bob.smith@myschool.edu,active
-13834,jdoe03,,John,Doe,john.doe@myschool.edu,active
-13aa3,psue01,,Peggy,Sue,peggy.sue@myschool.edu,active
+user_id,login_id,password,first_name,last_name,short_name,email,status
+01103,bsmith01,,Bob,Smith,Bobby Smith,bob.smith@myschool.edu,active
+13834,jdoe03,,John,Doe,,john.doe@myschool.edu,active
+13aa3,psue01,,Peggy,Sue,,peggy.sue@myschool.edu,active
 </pre>
 
 accounts.csv
@@ -188,9 +262,6 @@ interface, this is called the SIS ID.</td>
 <td>The date the term ends. The format should be in ISO 8601: YYYY-MM-DDTHH:MM:SSZ</td>
 </tr>
 </table>
-
-Any account that will have child accounts must be listed in the csv before any child account
-references it.
 
 Sample:
 
@@ -339,6 +410,11 @@ enrollments.csv
 <td><b>Required field if section_id is missing</b>. The course identifier from courses.csv</td>
 </tr>
 <tr>
+<td>root_account</td>
+<td>text</td>
+<td>The domain of the account to search for the user.</td>
+</tr>
+<tr>
 <td>user_id</td>
 <td>text</td>
 <td><b>Required field</b>. The User identifier from users.csv</td>
@@ -346,8 +422,13 @@ enrollments.csv
 <tr>
 <td>role</td>
 <td>text</td>
-<td><b>Required field</b>. student, teacher, ta, observer, designer, or a custom role defined
+<td><b>Required field if role_id missing</b>. student, teacher, ta, observer, designer, or a custom role defined
 by the account</td>
+</tr>
+<tr>
+<td>role_id</td>
+<td>text</td>
+<td><b>Required field if role missing</b>. Uses a role id, either built-in or defined by the account</td>
 </tr>
 <tr>
 <td>section_id</td>

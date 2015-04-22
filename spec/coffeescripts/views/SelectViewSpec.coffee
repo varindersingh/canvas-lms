@@ -1,8 +1,9 @@
 define [
+  'jquery'
   'Backbone'
   'compiled/views/SelectView'
   'helpers/jquery.simulate'
-], (Backbone, SelectView) ->
+], ($, Backbone, SelectView) ->
 
   view = null
 
@@ -18,6 +19,7 @@ define [
       view.$el.appendTo $('#fixtures')
     teardown: ->
       view.remove()
+      $("#fixtures").empty()
 
   test 'onChange it updates the model', ->
     view.model = new Backbone.Model

@@ -33,20 +33,6 @@ def notification_set(opts = {})
   @notification.reload
 end
 
-# The opts pertain to user only
-def create_user_with_cc(opts = {})
-  user_model(opts)
-
-  if @notification
-    communication_channel_model
-    @communication_channel.notification_policies.create!(:notification => @notification)
-  else
-    communication_channel_model
-  end
-
-  @user.reload
-end
-
 describe Notification do
   it "should create a new instance given valid attributes" do
     Notification.create!(notification_valid_attributes)
@@ -54,41 +40,20 @@ describe Notification do
 
   it "should have a default delay_for" do
     notification_model
-    @notification.delay_for.should be >= 0
+    expect(@notification.delay_for).to be >= 0
   end
 
   it "should have a decent state machine" do
     notification_model
-    @notification.state.should eql(:active)
+    expect(@notification.state).to eql(:active)
     @notification.deactivate
-    @notification.state.should eql(:inactive)
+    expect(@notification.state).to eql(:inactive)
     @notification.reactivate
-    @notification.state.should eql(:active)
+    expect(@notification.state).to eql(:active)
   end
 
   it "should always have some subject" do
-    Notification.create!(:name => 'Testing').subject.should_not be_nil
-  end
-
-  context "by_name" do
-    before do
-      Notification.create(:name => "foo")
-      Notification.create(:name => "bar")
-    end
-
-    it "should look up all notifications once and cache them thereafter" do
-      notifications = Notification.all
-      Notification.expects(:all).once.returns { notifications }
-      Notification.by_name("foo").should eql(Notification.find_by_name("foo"))
-      Notification.by_name("bar").should eql(Notification.find_by_name("bar"))
-    end
-
-    it "should give you different object for the same notification" do
-      n1 = Notification.by_name("foo")
-      n2 = Notification.by_name("foo")
-      n1.should eql n2
-      n1.should_not equal n2
-    end
+    expect(Notification.create!(:name => 'Testing').subject).not_to be_nil
   end
 end
 

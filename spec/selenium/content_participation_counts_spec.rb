@@ -1,7 +1,7 @@
 require File.expand_path(File.dirname(__FILE__) + '/common')
 
 describe "courses" do
-  it_should_behave_like "in-process server selenium tests"
+  include_examples "in-process server selenium tests"
 
   before do
     course_with_student_logged_in(:active_all => true)
@@ -15,15 +15,15 @@ describe "courses" do
 
   it "should show badges in the left nav of a course" do
     get "/courses/#{@course.id}"
-    f("#section-tabs .grades .nav-badge").text.should == "1"
+    expect(f("#section-tabs .grades .nav-badge").text).to eq "1"
   end
 
   it "should derement the badge when the grades page is visited" do
     # visiting the page will decrement the count on the next page load
     get "/courses/#{@course.id}/grades"
-    f("#section-tabs .grades .nav-badge").text.should == "1"
+    expect(f("#section-tabs .grades .nav-badge").text).to eq "1"
 
     get "/courses/#{@course.id}"
-    f("#section-tabs .grades .nav-badge").should be_nil
+    expect(f("#section-tabs .grades .nav-badge")).to be_nil
   end
 end

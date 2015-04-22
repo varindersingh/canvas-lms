@@ -2,15 +2,16 @@ define([
   'i18n!accounts' /* I18n.t */,
   'jquery' /* $ */,
   'str/htmlEscape',
+  'compiled/behaviors/authenticity_token',
   'jquery.ajaxJSON' /* getJSON */,
   'jqueryui/dialog'
-], function(I18n, $, h) {
+], function(I18n, $, h, authenticity_token) {
 
   function testLDAP() {
     clearTestLDAP();
     $("#test_ldap_dialog").dialog({
       title: I18n.t('test_ldap_dialog_title', "Test LDAP Settings"),
-      width: 500
+      width: 600
     });
     ENV.LDAP_TESTS[0].js_function();
   }
@@ -65,7 +66,7 @@ define([
     $("#ldap_login_result").html("<img src='/images/ajax-loader.gif'/>");
     var username = $("#ldap_test_login_user").val();
     var password = $("#ldap_test_login_pass").val();
-    $.post(ENV.LOGIN_TEST_URL, {'username': username, 'password': password, authenticity_token: ENV.AUTHENTICITY_TOKEN}, function(data) {
+    $.post(ENV.LOGIN_TEST_URL, {'username': username, 'password': password, authenticity_token: authenticity_token()}, function(data) {
       var success = true;
       var message = "";
       $.each(data, function(i, config) {

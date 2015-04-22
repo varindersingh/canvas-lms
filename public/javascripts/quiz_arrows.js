@@ -16,14 +16,19 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+// xsslint jqueryObject.identifier /Tpl$/
+
 define(['i18n!quizzes.show', 'jquery'], function(I18n, $) {
   // Create and append right/wrong arrows to all appropriate
   // answers on a quiz results page.
   return function() {
-    var rightAnswers     = $('#questions.show_correct_answers:not(.survey_quiz) .selected_answer.correct_answer'),
-        wrongAnswers     = $('#questions.show_correct_answers:not(.survey_quiz) .selected_answer.wrong_answer'),
-        correctAnswers   = $('#questions.show_correct_answers:not(.survey_quiz) .question:not(.short_answer_question, #questions.show_correct_answers:not(.survey_quiz) .numerical_question) .correct_answer:not(.selected_answer)'),
-        shortAnswers     = $('#questions.show_correct_answers:not(.survey_quiz):not(.survey_results) .short_answer_question .answers_wrapper, #questions.show_correct_answers:not(.survey_results):not(.survey_quiz) .numerical_question .answers_wrapper, #questions.show_correct_answers:not(.survey_results):not(.survey_quiz) .equation_combinations_holder_holder.calculated_question_answers'),
+    var $questions = $('#questions.show_correct_answers:not(.survey_quiz)');
+    var rightAnswers     = $questions.find('.selected_answer.correct_answer'),
+        wrongAnswers     = $questions.find('.selected_answer.wrong_answer'),
+        correctAnswers   = $questions.find('.question:not(.short_answer_question, .numerical_question, .matching_question) .correct_answer:not(.selected_answer)'),
+        editableMatches  = $('#quiz_edit_wrapper').find($questions.selector).find('.question.matching_question .correct_answer:not(.selected_answer)'),
+        readOnlyMatches  = $('#quiz_show').find($questions.selector).find('.question.matching_question .correct_answer:not(.selected_answer)'),
+        shortAnswers     = $questions.filter(':not(.survey_results)').find('.short_answer_question .answers_wrapper, #questions.show_correct_answers:not(.survey_results):not(.survey_quiz) .numerical_question .answers_wrapper, #questions.show_correct_answers:not(.survey_results):not(.survey_quiz) .equation_combinations_holder_holder.calculated_question_answers'),
         unansweredQ      = $('.question.unanswered .header .question_name'),
         creditPartial    = $('#questions.suppress_correct_answers:not(.survey_results) .question.partial_credit .header .question_name'),
         creditFull       = $('#questions.suppress_correct_answers:not(.survey_results) .question.correct .header .question_name'),
@@ -58,15 +63,17 @@ define(['i18n!quizzes.show', 'jquery'], function(I18n, $) {
     creditNoneTpl.text(I18n.t('answers.incorrect', 'Incorrect'));
     surveyAnswerTpl.text(I18n.t('answers.you_answered', 'You Answered'));
 
-    rightAnswers.append(rightTpl);
-    wrongAnswers.append(wrongTpl);
-    correctAnswers.append(correctTpl);
-    shortAnswers.append(shortTpl);
-    unansweredQ.append(unansweredTpl);
-    creditPartial.append(creditPartialTpl);
-    creditFull.append(creditFullTpl);
-    creditNone.append(creditNoneTpl);
-    surveyAnswers.append(surveyAnswerTpl);
+    rightAnswers.prepend(rightTpl);
+    wrongAnswers.prepend(wrongTpl);
+    correctAnswers.prepend(correctTpl);
+    editableMatches.parent().before(correctTpl);
+    readOnlyMatches.prepend(correctTpl);
+    shortAnswers.prepend(shortTpl);
+    unansweredQ.prepend(unansweredTpl);
+    creditPartial.prepend(creditPartialTpl);
+    creditFull.prepend(creditFullTpl);
+    creditNone.prepend(creditNoneTpl);
+    surveyAnswers.prepend(surveyAnswerTpl);
 
     // adjust these down a little so they align better w/ answers.
     $('.short_answer_question .answer_arrow').css('top', 5);

@@ -41,12 +41,12 @@ define [
           baseData:
             type: 'section'
             context: "course_#{ENV.course.id}_sections"
-            exclude: _.map(@model.sectionEditableEnrollments(), (e) -> "section_#{e.course_section_id}")
+            exclude: _.map(@model.sectionEditableEnrollments(), (e) -> "section_#{e.course_section_id}").concat(ENV.CONCLUDED_SECTIONS)
           noExpand: true
           browser:
             data:
               per_page: 100
-              type: 'section'
+              types: ['section']
               search_all_contexts: true
       @input = @$('#section_input').data('token_input')
       @input.$fakeInput.css('width', '100%')
@@ -62,8 +62,8 @@ define [
       $link = $token.find('a')
       $link.attr('href', '#')
       $link.attr('title', I18n.t("remove_user_from_course_section", "Remove user from %{course_section}", course_section: $token.find('div').attr('title')))
-      $screenreader_span = $('<span class="screenreader-only"></span>').append(I18n.t("remove_user_from_course_section",
-        "Remove user from %{course_section}", course_section: $token.find('div').attr('title')))
+      $screenreader_span = $('<span class="screenreader-only"></span>').append(h(I18n.t("remove_user_from_course_section",
+        "Remove user from %{course_section}", course_section: h($token.find('div').attr('title')))))
       $link.append($screenreader_span)
 
     update: (e) =>

@@ -40,24 +40,25 @@ module Api::V1::AssignmentOverride
     overrides.map{ |override| assignment_override_json(override) }
   end
 
-  def assignment_override_scope(assignment, include_students=false)
-    scope = assignment.overrides_visible_to(@current_user)
-    scope = scope.includes(:assignment_override_students) if include_students
-    scope
+  def assignment_override_collection(assignment, include_students=false)
+    overrides = AssignmentOverrideApplicator.overrides_for_assignment_and_user(assignment, @current_user)
+    if include_students
+      ActiveRecord::Associations::Preloader.new(overrides, :assignment_override_students).run
+    end
+    overrides
   end
 
   def find_assignment_override(assignment, set_or_id)
-    scope = assignment_override_scope(assignment)
+    overrides = assignment_override_collection(assignment)
+    return nil if overrides.empty? || set_or_id.nil?
     case set_or_id
     when CourseSection, Group
-      scope.where(
-        :set_type => set_or_id.class.to_s,
-        :set_id => set_or_id
-      ).first
-    when nil
-      nil
+      overrides.detect do |o|
+        o.set_type == set_or_id.class.to_s &&
+        o.set_id == set_or_id.id # maybe FIXME
+      end
     else
-      scope.find(set_or_id)
+      overrides.detect { |o| o.id == set_or_id.to_i }
     end
   end
 
@@ -196,11 +197,8 @@ module Api::V1::AssignmentOverride
       end
 
       unless defunct_student_ids.empty?
-        # on Rails 2, the delete_all will do an update_all
-        # if we don't put the scoped in. weird.
         override.assignment_override_students.
           where(:user_id => defunct_student_ids.to_a).
-          scoped.
           delete_all
       end
     end
@@ -286,5 +284,4 @@ module Api::V1::AssignmentOverride
       overrides
     end
   end
-
 end

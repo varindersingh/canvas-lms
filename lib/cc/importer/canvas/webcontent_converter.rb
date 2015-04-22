@@ -60,6 +60,16 @@ module CC::Importer::Canvas
             if display_name = file.at_css("display_name")
               file_map[id][:display_name] = display_name.text
             end
+            if usage_rights = file.at_css("usage_rights")
+              rights_hash = { :use_justification => usage_rights.attr('use_justification') }
+              if legal_copyright = usage_rights.at_css('legal_copyright')
+                rights_hash.merge!(:legal_copyright => legal_copyright.text)
+              end
+              if license = usage_rights.at_css('license')
+                rights_hash.merge!(:license => license.text)
+              end
+              file_map[id][:usage_rights] = rights_hash
+            end
           end
         end
       end
@@ -69,7 +79,7 @@ module CC::Importer::Canvas
       zip_file = File.join(@base_export_dir, 'all_files.zip')
       make_export_dir
       path = get_full_path(WEB_RESOURCES_FOLDER)
-      Zip::ZipFile.open(zip_file, 'w') do |zipfile|
+      Zip::File.open(zip_file, 'w') do |zipfile|
         Dir["#{path}/**/**"].each do |file|
           file_path = file.sub(path+'/', '')
           zipfile.add(file_path, file)

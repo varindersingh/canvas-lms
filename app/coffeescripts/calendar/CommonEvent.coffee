@@ -1,10 +1,17 @@
 define [
+  'i18n!calendar'
   'jquery'
   'jquery.ajaxJSON'
   'vendor/jquery.ba-tinypubsub'
-], ($) ->
+], (I18n, $) ->
 
   class
+    readableTypes:
+      assignment: I18n.t('event_type.assignment', 'Assignment')
+      discussion: I18n.t('event_type.discussion', 'Discussion')
+      event: I18n.t('event_type.event', 'Event')
+      quiz: I18n.t('event_type.quiz', 'Quiz')
+
     constructor: (data, contextInfo, actualContextInfo) ->
       @eventType = 'generic'
       @contextInfo = contextInfo
@@ -30,12 +37,14 @@ define [
     isUndated: () =>
       @start == null
 
+    isCompleted: -> false
+
     displayTimeString: () -> ""
     readableType: () -> ""
 
     fullDetailsURL: () -> null
 
-    startDate: () -> @date
+    startDate: () -> @originalStart || @date
     endDate: () -> @startDate()
 
     possibleContexts: () -> @allPossibleContexts || [ @contextInfo ]
@@ -73,16 +82,39 @@ define [
       $.ajaxJSON url, method, params, onSuccess, onError
 
     isDueAtMidnight: () ->
-      @start && (@midnightFudged || (@start.getHours() == 23 && @start.getMinutes() == 59))
+      @start && (@midnightFudged || (@start.getHours() == 23 && @start.getMinutes() > 30))
+
+    isPast: () ->
+      now = $.fudgeDateForProfileTimezone(new Date)
+      @start && @start < now
 
     copyDataFromObject: (data) ->
+      @originalStart = (new Date(@start) if @start)
+      @midnightFudged = false # clear out cached value because now we have new data
       if @isDueAtMidnight()
         @midnightFudged = true
         @start.setMinutes(30)
-      @forceMinimumDuration()
+        @start.setSeconds(0)
+        @end = new Date(@start.getTime()) unless @end
+      else
+        # minimum duration should only be enforced if not due at midnight
+        @forceMinimumDuration()
 
     forceMinimumDuration: () ->
       minimumDuration = 30 * 60 * 1000 # 30 minutes
-      if @end && (@end.getTime() - @start.getTime()) < minimumDuration
+      if @start && @end && (@end.getTime() - @start.getTime()) < minimumDuration
         # new date so we don't mutate the original
         @end = new Date(@start.getTime() + minimumDuration)
+
+    assignmentType: () ->
+      return if !@assignment
+      if @assignment.submission_types?.length
+        type = @assignment.submission_types[0]
+        if type == 'online_quiz'
+          return 'quiz'
+        if type == 'discussion_topic'
+          return 'discussion'
+      return 'assignment'
+
+    iconType: ->
+      if type = @assignmentType() then type else 'calendar-month'

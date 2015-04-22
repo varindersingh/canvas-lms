@@ -51,6 +51,7 @@ define [
       json.isObserver = @model.hasEnrollmentType('ObserverEnrollment')
       json.isPending = @model.pending(@model.currentRole)
       json.canEditSections = not _.isEmpty @model.sectionEditableEnrollments()
+      json.canLinkStudents = json.isObserver && !ENV.course.concluded
       json.canViewLoginIdColumn = ENV.permissions.manage_admin_users or ENV.permissions.manage_students
       json.canViewLoginId =
       json.canManage =
@@ -103,7 +104,7 @@ define [
       failure = =>
         @$el.show()
         $.flashError I18n.t('flash.removeError', 'Unable to remove the user. Please try again later.')
-      deferreds = _.map @model.allEnrollmentsByRole(@model.currentRole), (e) ->
+      deferreds = _.map @model.get('enrollments'), (e) ->
         $.ajaxJSON "#{ENV.COURSE_ROOT_URL}/unenroll/#{e.id}", 'DELETE'
       $.when(deferreds...).then success, failure
 

@@ -1,9 +1,10 @@
 define [
+  'jquery'
   'underscore'
   'str/htmlEscape'
   'compiled/util/listWithOthers'
   'jquery.instructure_misc_helpers'
-], (_, h, listWithOthers) ->
+], ($, _, h, listWithOthers) ->
 
   prepare = (context, filters) ->
     context = _.clone(context)
@@ -12,12 +13,12 @@ define [
     context
 
   format = (context, linkToContexts) ->
-    str = h(context.name)
+    html = h(context.name)
     if context.activeFilter
-      str = "<span class='active-filter'>#{str}</span>"
+      html = "<span class='active-filter'>#{html}</span>"
     if linkToContexts and context.type is "course"
-      str = "<a href='#{h(context.url)}'>#{str}</a>"
-    $.raw str
+      html = "<a href='#{h(context.url)}'>#{html}</a>"
+    $.raw html
 
   # given a map of ids by type (e.g. {courses: [1, 2], groups: ...})
   # and a map of possible contexts by type,

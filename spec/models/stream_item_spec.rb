@@ -27,8 +27,8 @@ describe StreamItem do
     dt.generate_stream_items([@user])
     si = @user.stream_item_instances.first.stream_item
     data = si.data(@user.id)
-    data.should be_a DiscussionTopic
-    data.user_id.should be_nil
+    expect(data).to be_a DiscussionTopic
+    expect(data.user_id).to be_nil
   end
 
   it "should prefer a Context for Message stream item context" do
@@ -36,11 +36,22 @@ describe StreamItem do
     course_with_student(:active_all => true)
     assignment_model(:course => @course)
     item = @user.stream_item_instances.first.stream_item
-    item.data.notification_name.should == 'Assignment Created'
-    item.context.should == @course
+    expect(item.data.notification_name).to eq 'Assignment Created'
+    expect(item.context).to eq @course
 
     course_items = @user.recent_stream_items(:contexts => [@course])
-    course_items.should == [item]
+    expect(course_items).to eq [item]
+  end
+
+  it "doesn't unlink discussion entries from their topics" do
+    user
+    context = Course.create!
+    dt = DiscussionTopic.create!(:context => context, :require_initial_post => true)
+    de = dt.root_discussion_entries.create!
+    dt.generate_stream_items([@user])
+    si = @user.stream_item_instances.first.stream_item
+    data = si.data(@user.id)
+    expect(de.reload.discussion_topic_id).not_to be_nil
   end
 
   describe "destroy_stream_items_using_setting" do
@@ -57,31 +68,16 @@ describe StreamItem do
   context "across shards" do
     specs_require_sharding
 
-    it "should create stream items on the user's shard" do
-      group_with_user
-      @user1 = @user
-      @user2 = @shard1.activate { user_model }
-      @coll = @group.collections.create!
-
-      UserFollow.create_follow(@user1, @coll)
-      UserFollow.create_follow(@user2, @coll)
-
-      @item = collection_item_model(:collection => @coll, :user => @user1)
-      @user2.reload.stream_item_instances.map { |i| i.stream_item.data }.should == [@item]
-      @user2.stream_item_instances.first.shard.should == @shard1
-      @user2.stream_item_instances.first.stream_item.shard.should == Shard.current
-    end
-
     it "should delete instances on all associated shards" do
       course_with_teacher(:active_all => 1)
       @user2 = @shard1.activate { user_model }
       @course.enroll_student(@user2).accept!
 
       dt = @course.discussion_topics.create!(:title => 'title')
-      @user2.reload.recent_stream_items.should == [dt.stream_item]
-      dt.stream_item.associated_shards.should == [Shard.current, @shard1]
+      expect(@user2.reload.recent_stream_items).to eq [dt.stream_item]
+      expect(dt.stream_item.associated_shards).to eq [Shard.current, @shard1]
       dt.stream_item.destroy
-      @user2.recent_stream_items.should == []
+      expect(@user2.recent_stream_items).to eq []
     end
 
     it "should not find stream items for courses from the wrong shard" do
@@ -97,10 +93,10 @@ describe StreamItem do
       end
       @dt = @course.discussion_topics.create!
 
-      @user2.recent_stream_items.map(&:data).sort_by(&:id).should == [@dt, @dt2].sort_by(&:id)
-      @user2.recent_stream_items(:context => @course).map(&:data).should == [@dt]
+      expect(@user2.recent_stream_items.map(&:data).sort_by(&:id)).to eq [@dt, @dt2].sort_by(&:id)
+      expect(@user2.recent_stream_items(:context => @course).map(&:data)).to eq [@dt]
       @shard1.activate do
-        @user2.recent_stream_items(:context => @course2).map(&:data).should == [@dt2]
+        expect(@user2.recent_stream_items(:context => @course2).map(&:data)).to eq [@dt2]
       end
     end
 
@@ -113,8 +109,8 @@ describe StreamItem do
       enable_cache do
         items = @user2.cached_recent_stream_items
         items2 = @shard1.activate { @user2.cached_recent_stream_items }
-        items.should == [dt.stream_item]
-        items.should === items2 # same object, because same cache key
+        expect(items).to eq [dt.stream_item]
+        expect(items).to be === items2 # same object, because same cache key
 
         item = @user2.visible_stream_item_instances.last
         item.update_attribute(:hidden, true)
@@ -122,8 +118,8 @@ describe StreamItem do
         # after dismissing an item, the old items should no longer be cached
         items = @user2.cached_recent_stream_items
         items2 = @shard1.activate { @user2.cached_recent_stream_items }
-        items.should be_empty
-        items2.should be_empty
+        expect(items).to be_empty
+        expect(items2).to be_empty
       end
     end
   end

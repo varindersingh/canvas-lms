@@ -1,4 +1,4 @@
-#
+  #
 # Copyright (C) 2013 Instructure, Inc.
 #
 # This file is part of Canvas.
@@ -18,6 +18,7 @@
 
 define [
   'i18n!conversation_dialog'
+  'jquery'
   'underscore'
   'Backbone'
   'compiled/views/DialogBaseView'
@@ -30,9 +31,8 @@ define [
   'compiled/views/conversations/AutocompleteView'
   'compiled/views/conversations/CourseSelectionView'
   'compiled/views/conversations/ContextMessagesView'
-  'compiled/widget/ContextSearch'
   'vendor/jquery.elastic'
-], (I18n, _, {Collection}, DialogBaseView, template, preventDefault, composeTitleBarTemplate, composeButtonBarTemplate, addAttachmentTemplate, Message, AutocompleteView, CourseSelectionView, ContextMessagesView) ->
+], (I18n, $, _, {Collection}, DialogBaseView, template, preventDefault, composeTitleBarTemplate, composeButtonBarTemplate, addAttachmentTemplate, Message, AutocompleteView, CourseSelectionView, ContextMessagesView) ->
 
   ##
   # reusable message composition dialog
@@ -42,8 +42,10 @@ define [
 
     els:
       '.message_course':                '$messageCourse'
+      '.message_course_ro':             '$messageCourseRO'
       'input[name=context_code]':       '$contextCode'
       '.message_subject':               '$messageSubject'
+      '.message_subject_ro':            '$messageSubjectRO'
       '.context_messages':              '$contextMessages'
       '.media_comment':                 '$mediaComment'
       'input[name=media_comment_id]':   '$mediaCommentId'
@@ -54,6 +56,8 @@ define [
       '.message-body':                  '$messageBody'
       '.conversation_body':             '$conversationBody'
       '.compose_form':                  '$form'
+      '.user_note':                     '$userNote'
+      '.user_note_info':                '$userNoteInfo'
 
     messages:
       flashSuccess: I18n.t('message_sent', 'Message sent!')
@@ -61,9 +65,9 @@ define [
     dialogOptions: ->
       id: 'compose-new-message'
       autoOpen: false
-      minWidth: 300
+      minWidth: 550
       width: 700
-      minHeight: 300
+      minHeight: 500
       height: 550
       resizable: true
       # Event handler for catching when the dialog is closed.
@@ -73,6 +77,7 @@ define [
         @afterClose()
       resize: =>
         @resizeBody()
+        @_limitContentSize()
       buttons: [
         text: I18n.t '#buttons.cancel', 'Cancel'
         click: @cancel
@@ -93,9 +98,16 @@ define [
       @launchParams = _.pick(options, 'context', 'user') if options.remoteLaunch
 
       @render()
+      @appendAddAttachmentTemplate()
+
       super
       @initializeForm()
       @resizeBody()
+
+    # this method handles a layout bug with jqueryUI that occurs when you
+    # attempt to resize the modal beyond the viewport.
+    _limitContentSize: ->
+      @$el.width('100%') if @$el.width() > @$fullDialog.width()
 
     ##
     # detach events that were dynamically added when the dialog is closed.
@@ -109,6 +121,9 @@ define [
       @$fullDialog.off 'change', '.file_input'
       @$fullDialog.off 'click', '.attach-media'
       @$fullDialog.off 'click', '.media-comment .remove_link'
+
+      @launchParams = null
+
       @trigger('close')
       if @returnFocusTo
         @returnFocusTo.focus()
@@ -132,21 +147,22 @@ define [
       @$fullDialog.addClass('compose-message-dialog')
 
       # add attachment and media buttons to bottom bar
-      @$fullDialog.find('.ui-dialog-buttonpane').prepend composeButtonBarTemplate()
+      @$fullDialog.find('.ui-dialog-buttonpane').prepend composeButtonBarTemplate({isIE10: INST.browser.ie10})
 
       @$addMediaComment = @$fullDialog.find('.attach-media')
 
     prepareTextarea: ($scope) ->
       $textArea = $scope.find('textarea')
-      $textArea.keypress (e) =>
-        if e.which is 13 and e.shiftKey
-          $(e.target).closest('form').submit()
-          false
       $textArea.elastic()
 
     onCourse: (course) =>
       @recipientView.setContext(course, true)
-      @$contextCode.val(if course?.id then course.id else '')
+      if course?.id
+        @$contextCode.val(course.id)
+        @recipientView.disable(false)
+      else
+        @$contextCode.val('')
+      @$messageCourseRO.text(if course then course.name else I18n.t('no_course','No course'))
 
     defaultCourse: null
     setDefaultCourse: (course) ->
@@ -158,6 +174,10 @@ define [
         el: @$recipients
         disabled: @model?.get('private')
       ).render()
+      @recipientView.on('changeToken', @recipientIdsChanged)
+      unless _.include(ENV.current_user_roles, 'admin')
+        @$messageCourse.attr('aria-required', true)
+        @recipientView.disable(true)
 
       @$messageCourse.prop('disabled', !!@model)
       @courseView = new CourseSelectionView(
@@ -167,13 +187,22 @@ define [
       )
       @courseView.on('course', @onCourse)
       if @model
-        # TODO: I imagine we'll be changing this
-        @courseView.setValue("course_" + _.keys(@model.get('audience_contexts').courses)[0])
+        if @model.get('context_code')
+          @courseView.setValue(@model.get('context_code'))
+        else
+          @courseView.setValue("course_" + _.keys(@model.get('audience_contexts').courses)[0])
+        @recipientView.disable(false)
       else if @launchParams
         @courseView.setValue(@launchParams.context) if @launchParams.context
+        @recipientView.disable(false)
       else
         @courseView.setValue(@defaultCourse)
-      @courseView.focus()
+      if @model
+        @courseView.$picker.css('display', 'none')
+        @recipientView.$input.focus()
+      else
+        @$messageCourseRO.css('display', 'none')
+        @courseView.focus()
 
       if @tokenInput = @$el.find('.recipients').data('token_input')
         # since it doesn't infer percentage widths, just whatever the current pixels are
@@ -188,7 +217,7 @@ define [
                 data: data[0]
 
       if @to && @to != 'forward' && @message
-        tokens = [] 
+        tokens = []
         tokens.push(@message.get('author'))
         if @to == 'replyAll' || ENV.current_user_id == @message.get('author').id
           tokens = tokens.concat(@message.get('participants'))
@@ -198,11 +227,14 @@ define [
 
       @recipientView.setTokens([@launchParams.user]) if @launchParams
 
-      if @tokenInput
-        @tokenInput.change = @recipientIdsChanged
-
-      @$messageSubject.prop('disabled', !!@model)
-      @$messageSubject.val(@model?.get('subject'))
+      if @model
+        @$messageSubject.css('display', 'none')
+        @$messageSubject.prop('disabled', true)
+      else
+        @$messageSubjectRO.css('display', 'none')
+      if @model?.get('subject')
+        @$messageSubject.val(@model.get('subject'))
+        @$messageSubjectRO.text(@model.get('subject'))
 
       if messages = @model?.messageCollection
         # include only messages which
@@ -217,7 +249,7 @@ define [
         contextView.render()
 
       @$fullDialog.on 'click', '.message-body', @handleBodyClick
-      @$fullDialog.on 'click', '.attach-file', preventDefault =>
+      @$fullDialog.on 'click', '.attach-file', =>
         @addAttachment()
       @$fullDialog.on 'click', '.attachment .remove_link', preventDefault (e) =>
         @removeAttachment($(e.currentTarget))
@@ -234,7 +266,7 @@ define [
 
       @$form.formSubmit
         fileUpload: => (@$fullDialog.find(".attachment_list").length > 0)
-        files: => (@$fullDialog.find(".file_input")) 
+        files: => (@$fullDialog.find(".file_input"))
         preparedFileUpload: true
         context_code: "user_" + ENV.current_user_id
         folder_id: @options.folderId
@@ -247,6 +279,10 @@ define [
         handle_files: (attachments, data) ->
           data.attachment_ids = (a.attachment.id for a in attachments)
           data
+        processData: (formData) =>
+          unless formData.context_code
+            formData.context_code = @options.account_context_code
+          formData
         onSubmit: (@request, submitData) =>
           # close dialog after submitting the message
           dfd = $.Deferred()
@@ -269,26 +305,66 @@ define [
               @trigger('addMessage', message.toJSON().conversation.messages[0], response)
             else
               @trigger('newConversations', response)
+          $.when(@request).fail ->
+            dfd.reject()
 
     recipientIdsChanged: (recipientIds) =>
-      if recipientIds.length > 1 or recipientIds[0]?.match(/^(course|group)_/)
-        @toggleOptions(user_note: off, group_conversation: on)
+      if (_.isEmpty(recipientIds) || _.contains(recipientIds, /(teachers|tas|observers)$/))
+        @toggleUserNote(false)
       else
-        @toggleOptions(user_note: @canAddNotesFor(recipientIds[0]), group_conversation: off)
+        canAddNotes = _.map @recipientView.tokenModels(), (tokenModel) =>
+          @canAddNotesFor(tokenModel)
+        @toggleUserNote(_.every(canAddNotes))
+
+    canAddNotesFor: (user) =>
+      return false unless ENV.CONVERSATIONS.NOTES_ENABLED
+      return false unless user?
+      return true if(user.id.match(/students$/) || user.id.match(/^group/))
+      for id, roles of user.get('common_courses')
+        return true if 'StudentEnrollment' in roles and
+          (ENV.CONVERSATIONS.CAN_ADD_NOTES_FOR_ACCOUNT or ENV.CONVERSATIONS.CAN_ADD_NOTES_FOR_COURSES[id])
+      false
+
+    toggleUserNote: (state) ->
+      @$userNoteInfo.toggle(state)
+      @$userNote.prop('checked', false) if state == false
       @resizeBody()
 
-    resizeBody: ->
-      # place the attachment pane at the bottom of the form
-      @$attachmentsPane.css('top', @$attachmentsPane.height())
+    resizeBody: =>
+      @updateAttachmentOverflow()
       # Compute desired height of body
       @$messageBody.height( (@$el.offset().top + @$el.height()) - @$messageBody.offset().top - @$attachmentsPane.height())
 
+    attachmentsShouldOverflow: ->
+      $attachments = @$attachments.children()
+      ($attachments.length * $attachments.outerWidth()) > @$attachmentsPane.width()
+
     addAttachment: ->
+      $('#file_input').attr('id', _.uniqueId('file_input'))
+      @appendAddAttachmentTemplate()
+      @updateAttachmentOverflow()
+
+      # Hacky crazyness for ie10.
+      # If you try to use javascript to 'click' on a file input element,
+      # when you go to submit the form it will give you an "access denied" error.
+      # So, for IE10, we make the paperclip icon a <label>  that references the input it automatically open the file input.
+      # But making it a <label> makes it so you can't tab to it. so for everyone else me make it a <button> and open the file
+      # input dialog with a javascript "click"
+      if INST.browser.ie10
+        @focusAddAttachment()
+      else
+        @$fullDialog.find('.file_input:last').click()
+
+    appendAddAttachmentTemplate: ->
       $attachment = $(addAttachmentTemplate())
       @$attachments.append($attachment)
       $attachment.hide()
-      $attachment.find('input').click()
-      @focusAddAttachment()
+
+    setAttachmentClip: ($attachment) ->
+      $name = $attachment.find( $('.attachment-name') )
+      $clip = $attachment.find( $('.attachment-name-clip') )
+      $clip.height( $name.height() )
+      $clip.addClass('hidden') if $name.height() < 35
 
     imageTypes: ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg']
 
@@ -315,6 +391,7 @@ define [
       file = input.files[0]
       name = file.name
       $attachment.find('.attachment-name').text(name)
+      @setAttachmentClip($attachment)
       remove = $attachment.find('.remove_link')
       remove.attr('aria-label', remove.attr('title')+': '+name)
       extension = name.split('.').pop().toLowerCase()
@@ -361,7 +438,7 @@ define [
       $attachment.slideUp "fast", =>
         $attachment.remove()
         @updateAttachmentPane()
-        
+
     focusPrevAttachment: ($attachment) =>
       $newTarget = $attachment.prevAll(':visible').first()
       if !$newTarget.length then return false
@@ -375,11 +452,6 @@ define [
     focusAddAttachment: () ->
       @$fullDialog.find('.attach-file').focus()
 
-#    addToken: (userData) ->
-#      input = @$el.find('.recipients').data('token_input')
-#      input.addToken(userData) if input
-#      @resizeBody()
-#
     addMediaComment: ->
       @$mediaComment.mediaComment 'create', 'any', (id, type) =>
         @$mediaCommentId.val(id)
@@ -393,28 +465,9 @@ define [
       @$mediaComment.hide()
       @$addMediaComment.show()
 
+    updateAttachmentOverflow: ->
+      @$attachmentsPane.toggleClass('overflowed', @attachmentsShouldOverflow())
+
     updateAttachmentPane: ->
       @$attachmentsPane[if @$attachmentsPane.find('input:not([value=])').length then 'addClass' else 'removeClass']('has-items')
       @resizeBody()
-
-#    messageData: (data) ->
-#      numRecipients = if @options.conversation
-#        Math.max(@options.conversation.get('audience').length, 1)
-#      else
-#        # note: this number may be high, if users appear in multiple of the
-#        # specified recipient contexts. there's no way of knowing without going
-#        # to the server first, which is what we're trying to avoid.
-#        _.reduce @tokenInput.$tokens.find('input[name="recipients[]"]'),
-#          (memo, node) -> memo + ($(node).closest('li').data('user_count') ? 1),
-#          0
-#      {recipient_count: numRecipients, message: {body: data.body}}
-#
-#    resetForParticipant: (user) ->
-#      @toggleOptions(user_note: on) if @canAddNotesFor(user)
-#
-#    toggleOptions: (options) ->
-#      for key, enabled of options
-#        $node = @$form.find(".#{key}_info")
-#        $node.showIf(enabled)
-#        $node.find("input[type=checkbox][name=#{key}]").prop('checked', false) unless enabled
-#

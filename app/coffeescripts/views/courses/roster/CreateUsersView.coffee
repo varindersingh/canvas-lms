@@ -23,8 +23,8 @@ define [
     events: _.extend({}, @::events,
       'click .createUsersStartOver': 'startOver'
       'click .createUsersStartOverFrd': 'startOverFrd'
-      'change #enrollment_type': 'changeEnrollment'
-      'click #enrollment_type': 'changeEnrollment'
+      'change #role_id': 'changeEnrollment'
+      'click #role_id': 'changeEnrollment'
       'click .dialog_closer': 'close'
     )
 
@@ -38,17 +38,17 @@ define [
 
     attach: ->
       @model.on 'change:step', @render, this
-      @model.on 'change:enrollment_type', @maybeShowPrivileges
+      @model.on 'change:role_id', @maybeShowPrivileges
 
     maybeShowPrivileges: =>
-      role = _.findWhere(@model.get('roles'), name: @model.get('enrollment_type'))
+      role = _.findWhere(@model.get('roles'), id: @model.get('role_id'))
       if role and role.base_role_name in ['TeacherEnrollment', 'TaEnrollment']
         @$privileges.show()
       else
         @$privileges.hide()
 
     changeEnrollment: (event) ->
-      @model.set 'enrollment_type', event.target.value
+      @model.set 'role_id', event.target.value
 
     openAgain: ->
       @startOverFrd()
@@ -59,8 +59,10 @@ define [
 
     onSaveSuccess: ->
       @model.incrementStep()
+      # maintain focus in scope
+      @$('.createUsersStartOver').focus()
       if @model.get('step') is 3
-        role = @rolesCollection.where({name: @model.get('enrollment_type')})[0]
+        role = @rolesCollection.where({id: @model.get('role_id')})[0]
         role?.increment 'count', @model.get('users').length
         newUsers = @model.get('users').length
         @courseModel?.increment 'pendingInvitationsCount', newUsers
@@ -79,11 +81,18 @@ define [
 
     startOverFrd: ->
       @model.startOver()
-      if @model.get('limit_privileges_to_course_section') == "0"
-        @$el.find('#limit_privileges_to_course_section').prop('checked', false)
       @$textarea?.val ''
+
+    toJSON: =>
+      json = super
+      json.course_section_id = "#{json.course_section_id}"
+      json.limit_privileges_to_course_section = json.limit_privileges_to_course_section == true ||
+                                                    json.limit_privileges_to_course_section == "1"
+      json
 
     afterRender: ->
       @$('[placeholder]').placeholder()
       @maybeShowPrivileges()
+      $('#user_email_errors').focus()
+
 

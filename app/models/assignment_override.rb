@@ -23,11 +23,17 @@ class AssignmentOverride < ActiveRecord::Base
   simply_versioned :keep => 10
 
   attr_accessible
+  EXPORTABLE_ATTRIBUTES = [
+    :id, :created_at, :updated_at, :assignment_id, :assignment_version, :set_type, :set_id, :title, :workflow_state, :due_at_overridden, :due_at, :all_day,
+    :all_day_date, :unlock_at_overridden, :unlock_at, :lock_at_overridden, :lock_at, :quiz_id, :quiz_version
+  ]
+
+  EXPORTABLE_ASSOCIATIONS = [:assignment, :quiz, :assignment_override_students]
 
   attr_accessor :dont_touch_assignment
 
   belongs_to :assignment
-  belongs_to :quiz
+  belongs_to :quiz, class_name: 'Quizzes::Quiz'
   belongs_to :set, :polymorphic => true
   has_many :assignment_override_students, :dependent => :destroy
 
@@ -44,12 +50,12 @@ class AssignmentOverride < ActiveRecord::Base
   validates_uniqueness_of :set_id, :scope => [:quiz_id, :set_type, :workflow_state],
     :if => lambda{ |override| override.quiz? && override.active? && concrete_set.call(override) }
   validate :if => concrete_set do |record|
-    if record.set && record.assignment
+    if record.set && record.assignment && record.active?
       case record.set
       when CourseSection
         record.errors.add :set, "not from assignment's course" unless record.set.course_id == record.assignment.context_id
       when Group
-        record.errors.add :set, "not from assignment's group category" unless record.deleted? || record.set.group_category_id == record.assignment.group_category_id
+        record.errors.add :set, "not from assignment's group category" unless record.set.group_category_id == record.assignment.group_category_id
       end
     end
   end
@@ -101,7 +107,7 @@ class AssignmentOverride < ActiveRecord::Base
     end
   end
 
-  scope :active, where(:workflow_state => 'active')
+  scope :active, -> { where(:workflow_state => 'active') }
 
   before_validation :default_values
   def default_values
@@ -190,6 +196,7 @@ class AssignmentOverride < ActiveRecord::Base
   def as_hash
     { :title => title,
       :due_at => due_at,
+      :id => id,
       :all_day => all_day,
       :set_type => set_type,
       :set_id => set_id,
@@ -209,6 +216,17 @@ class AssignmentOverride < ActiveRecord::Base
       set.participating_students
     when 'Group'
       set.participants
+    end
+  end
+
+  def applies_to_students_with_visibility
+    return applies_to_students unless self.assignment.try(:differentiated_assignments_applies?) || self.quiz.try(:differentiated_assignments_applies?)
+    if self.quiz
+      applies_to_students.able_to_see_quiz_in_course_with_da(self.quiz_id, context.id)
+    elsif self.assignment
+      applies_to_students.able_to_see_assignment_in_course_with_da(self.assignment_id, context.id)
+    else
+      applies_to_students
     end
   end
 
@@ -235,7 +253,7 @@ class AssignmentOverride < ActiveRecord::Base
   has_a_broadcast_policy
   set_broadcast_policy do |p|
     p.dispatch :assignment_due_date_changed
-    p.to { applies_to_students }
+    p.to { applies_to_students_with_visibility }
     p.whenever { |record| record.notify_change? }
     p.filter_asset_by_recipient { |record, user|
       # note that our asset for this message is an Assignment, not an AssignmentOverride
@@ -246,38 +264,4 @@ class AssignmentOverride < ActiveRecord::Base
     p.to { applies_to_admins }
     p.whenever { |record| record.notify_change? }
   end
-
-  scope :visible_to, lambda { |admin, course|
-    scopes = []
-
-    # adhoc overrides for visible students
-    scopes << course.enrollments_visible_to(admin).
-        select("assignment_override_students.assignment_override_id AS id").
-        joins("INNER JOIN assignment_override_students ON assignment_override_students.user_id=enrollments.user_id").
-        uniq
-
-    # group overrides for visible groups
-    scopes << course.groups_visible_to(admin).
-        select("assignment_overrides.id").
-        joins("INNER JOIN assignment_overrides ON assignment_overrides.set_type='Group' AND groups.id=assignment_overrides.set_id")
-
-    # section overrides for visible sections
-    scopes << course.sections_visible_to(admin).
-        select("assignment_overrides.id").
-        joins("INNER JOIN assignment_overrides ON assignment_overrides.set_type='CourseSection' AND course_sections.id=assignment_overrides.set_id")
-
-    # section overrides for visible students
-    scopes << course.enrollments_visible_to(admin).
-        select("assignment_overrides.id").
-        joins("INNER JOIN assignment_overrides ON assignment_overrides.set_type='CourseSection' AND enrollments.course_section_id=assignment_overrides.set_id")
-
-    # union the visible override subselects and join against them
-    subselect = scopes.map{ |scope| scope.to_sql }.join(' UNION ')
-    join_clause = "INNER JOIN (#{subselect}) AS visible_overrides ON visible_overrides.id=assignment_overrides.id"
-    if Rails.version < '3'
-      { :joins => join_clause, :readonly => false }
-    else
-      joins(join_clause).readonly(false)
-    end
-  }
 end

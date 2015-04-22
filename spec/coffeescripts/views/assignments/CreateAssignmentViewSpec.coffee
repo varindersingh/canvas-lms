@@ -6,8 +6,13 @@ define [
   'compiled/views/assignments/CreateAssignmentView'
   'compiled/views/DialogFormView'
   'jquery'
+  'timezone'
+  'vendor/timezone/America/Juneau'
+  'vendor/timezone/fr_FR'
+  'helpers/I18nStubber'
   'helpers/jquery.simulate'
-], (Backbone, AssignmentGroupCollection, AssignmentGroup, Assignment, CreateAssignmentView, DialogFormView, $) ->
+  'compiled/behaviors/tooltip'
+], (Backbone, AssignmentGroupCollection, AssignmentGroup, Assignment, CreateAssignmentView, DialogFormView, $, tz, juneau, french, I18nStubber) ->
 
   fixtures = $('#fixtures')
 
@@ -17,19 +22,25 @@ define [
   assignment2 = ->
     new Assignment(buildAssignment2())
 
+  assignment3 = ->
+    new Assignment(buildAssignment3())
+
+  assignment4 = ->
+    new Assignment(buildAssignment4())
+
   buildAssignment1 = ->
     date1 =
-      "due_at":"2013-08-28T23:59:00-06:00"
+      "due_at": new Date("August 28, 2013").toISOString()
       "title":"Summer Session"
     date2 =
-      "due_at":"2013-08-28T23:59:00-06:00"
+      "due_at": new Date("August 28, 2013").toISOString()
       "title":"Winter Session"
 
     buildAssignment(
       "id":1
       "name":"History Quiz"
       "description":"test"
-      "due_at":"2013-08-21T23:59:00-06:00"
+      "due_at": new Date("August 21, 2013").toISOString()
       "points_possible":2
       "position":1
       "all_dates":[date1, date2]
@@ -39,9 +50,29 @@ define [
     buildAssignment(
       "id":3
       "name":"Math Quiz"
-      "due_at":"2013-08-23T23:59:00-06:00"
+      "due_at": new Date("August 23, 2013").toISOString()
       "points_possible":10
       "position":2
+    )
+
+  buildAssignment3 = ->
+    buildAssignment(
+      "id":4
+      "name":""
+      "due_at": ""
+      "points_possible":10
+      "position":3
+    )
+
+  buildAssignment4 = ->
+    buildAssignment(
+      "id":5
+      "name":""
+      "due_at": ""
+      "unlock_at": new Date("August 1, 2013").toISOString()
+      "lock_at": new Date("August 30, 2013").toISOString()
+      "points_possible":10
+      "position":4
     )
 
   buildAssignment = (options) ->
@@ -82,7 +113,21 @@ define [
     setup: ->
       @assignment1 = assignment1()
       @assignment2 = assignment2()
+      @assignment3 = assignment3()
+      @assignment4 = assignment4()
       @group       = assignmentGroup()
+
+      @snapshot = tz.snapshot()
+      I18nStubber.pushFrame()
+
+    teardown: ->
+      ENV.VALID_DATE_RANGE = {
+        start_at: {date: null, date_context: null}
+        end_at: {date: null, date_context: null}
+      }
+
+      tz.restore(@snapshot)
+      I18nStubber.popFrame()
 
   test "initialize generates a new assignment for creation", ->
     view = createView(@group)
@@ -119,6 +164,17 @@ define [
     view.onSaveSuccess()
 
     equal @group.get("assignments").length, 3
+
+    DialogFormView.prototype.close.restore()
+
+  test "the form is cleared after adding an assignment", ->
+    sinon.stub( DialogFormView.prototype, "close", -> )
+
+    view = createView(@group)
+    view.onSaveSuccess()
+
+    equal view.$("#ag_#{@group.id}_assignment_name").val(), ""
+    equal view.$("#ag_#{@group.id}_assignment_points").val(), "0"
 
     DialogFormView.prototype.close.restore()
 
@@ -191,3 +247,79 @@ define [
     $.fn.datetime_field.restore()
     DialogFormView.prototype.openAgain.restore()
 
+  test "requires name to save assignment", ->
+    view = createView(@assignment3)
+    data =
+      name: ""
+    errors = view.validateBeforeSave(data, [])
+
+    ok errors["name"]
+    equal errors["name"].length, 1
+    equal errors["name"][0]["message"], "Name is required!"
+
+  test 'rejects a letter for points_possible', ->
+    view = createView(@assignment3)
+    data =
+      name: "foo"
+      points_possible: 'a'
+    errors = view.validateBeforeSave(data, [])
+    ok errors["points_possible"]
+    equal errors['points_possible'][0]['message'], 'Points possible must be a number'
+
+  test 'passes explicit submission_type for Assignment option', ->
+    view = createView(@group)
+    data = view.getFormData()
+    equal data.submission_types, 'none'
+
+  test 'validates due date against date range', ->
+    ENV.VALID_DATE_RANGE = {
+      start_at: {date: new Date("August 20, 2013").toISOString(), date_context: "term"}
+      end_at: {date: new Date("August 30, 2013").toISOString(), date_context: "course"}
+    }
+    view = createView(@assignment3)
+    data =
+      name: "Example"
+      due_at: new Date("September 1, 2013").toISOString()
+    errors = view.validateBeforeSave(data, [])
+    equal errors['due_at'][0]['message'], 'Due date cannot be after course end'
+
+    data =
+      name: "Example"
+      due_at: new Date("July 1, 2013").toISOString()
+    errors = view.validateBeforeSave(data, [])
+    ok errors["due_at"]
+    equal errors['due_at'][0]['message'], 'Due date cannot be before term start'
+
+  test 'validates due date for lock and unlock', ->
+    view = createView(@assignment4)
+
+    data =
+      name: "Example"
+      due_at: new Date("September 1, 2013").toISOString()
+    errors = view.validateBeforeSave(data, [])
+    ok errors["due_at"]
+    equal errors['due_at'][0]['message'], 'Due date cannot be after lock date'
+
+    data =
+      name: "Example"
+      due_at: new Date("July 1, 2013").toISOString()
+    errors = view.validateBeforeSave(data, [])
+    ok errors["due_at"]
+    equal errors['due_at'][0]['message'], 'Due date cannot be before unlock date'
+
+  test "renders due dates with locale-appropriate format string", ->
+    tz.changeLocale(french, 'fr_FR')
+    I18nStubber.setLocale 'fr_FR'
+    I18nStubber.stub 'fr_FR',
+      'date.formats.short': '%-d %b'
+      'date.abbr_month_names.8': 'août'
+    view = createView(@assignment1)
+    equal view.$("#vdd_tooltip_assign_1 div dd").first().text().trim(), '28 août'
+
+  test "renders due dates in appropriate time zone", ->
+    tz.changeZone(juneau, 'America/Juneau')
+    I18nStubber.stub 'en',
+      'date.formats.short': '%b %-d'
+      'date.abbr_month_names.8': 'Aug'
+    view = createView(@assignment1)
+    equal view.$("#vdd_tooltip_assign_1 div dd").first().text().trim(), 'Aug 27'

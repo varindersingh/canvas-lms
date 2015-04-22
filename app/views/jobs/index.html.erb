@@ -5,10 +5,10 @@
     position: relative;
     padding: 10px;
   }
-  span.has-failed-attempts, span.on-hold {
+  span.has-failed-attempts, span.on-hold, span.slow {
     color: orange;
   }
-  span.has-failed-max-attempts {
+  span.has-failed-max-attempts, span.super-slow {
     color: red;
   }
   dl#job-attributes dt {
@@ -130,6 +130,10 @@
       <td id="job-failed_at" class="show-field">&nbsp;</td>
     </tr>
     <tr>
+      <td><%= before_label :original_job_id, "Original Job ID" %></td>
+      <td id="job-original_job_id" class="show-field">&nbsp;</td>
+    </tr>
+    <tr>
       <td><%= before_label :handler, "Handler" %></td>
       <td><a href='#' id='job-handler-show'>(<%= t 'actions.show', "show" %>)</a>
         <div id='job-handler-wrapper' class='show-field-wrapper'><textarea id='job-handler' class='show-field'></textarea></div>
@@ -147,7 +151,7 @@
 
 <%
 jobs_opts = {
-  :max_attempts => Delayed::Worker.max_attempts,
+  :max_attempts => Delayed::Settings.max_attempts,
   :flavor => @flavor,
   :url => jobs_url(:only => :jobs),
   :batch_update_url => batch_update_jobs_url,
@@ -155,6 +159,8 @@ jobs_opts = {
   :on_hold_attempt_count => Delayed::Job::ON_HOLD_COUNT,
   :limit => JobsController::LIMIT,
   :starting_query => params[:q],
+  :slow_threshold => Setting.get('jobs.slow_threshold', 600).to_f,
+  :super_slow_threshold => Setting.get('jobs.super_slow_threshold', 3600).to_f
 }
 running_opts = jobs_opts.merge({
   :url => jobs_url(:only => :running),

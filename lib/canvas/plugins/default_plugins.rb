@@ -2,16 +2,6 @@ Dir.glob('lib/canvas/plugins/validators/*').each do |file|
   require_dependency file
 end
 
-Canvas::Plugin.register('facebook', nil, {
-  :name => lambda{ t :name, 'Facebook' },
-  :description => lambda{ t :description, 'Canvas Facebook application' },
-  :website => 'http://www.facebook.com',
-  :author => 'Instructure',
-  :author_website => 'http://www.instructure.com',
-  :version => '1.0.0',
-  :settings_partial => 'plugins/facebook_settings',
-  :validator => 'FacebookValidator'
-})
 Canvas::Plugin.register('linked_in', nil, {
   :name => lambda{ t :name, 'LinkedIn' },
   :description => lambda{ t :description, 'LinkedIn integration' },
@@ -22,6 +12,16 @@ Canvas::Plugin.register('linked_in', nil, {
   :settings_partial => 'plugins/linked_in_settings',
   :validator => 'LinkedInValidator'
 })
+Canvas::Plugin.register('diigo', nil, {
+  :name => lambda{ t :name, 'Diigo' },
+  :description => lambda{ t :description, 'Diigo integration' },
+  :website => 'https://www.diigo.com',
+  :author => 'Instructure',
+  :author_website => 'http://www.instructure.com',
+  :version => '1.0.0',
+  :settings_partial => 'plugins/diigo_settings',
+  :validator => 'DiigoValidator'
+})
 Canvas::Plugin.register('twitter', nil, {
   :name => lambda{ t :name, 'Twitter' },
   :description => lambda{ t :description, 'Twitter notifications' },
@@ -31,6 +31,16 @@ Canvas::Plugin.register('twitter', nil, {
   :version => '1.0.0',
   :settings_partial => 'plugins/twitter_settings',
   :validator => 'TwitterValidator'
+})
+Canvas::Plugin.register('yo', nil, {
+  :name => lambda{ t :name, 'Yo'},
+  :description => lambda{ t :description, 'Just Yo' },
+  :website => 'http://www.justyo.co',
+  :author => 'Instructure',
+  :author_website => 'http://www.instructure.com',
+  :version => '1.0.0',
+  :settings_partial => 'plugins/yo_settings',
+  :validator => 'YoValidator'
 })
 Canvas::Plugin.register('scribd', nil, {
   :name => lambda{ t :name, 'Scribd' },
@@ -62,6 +72,16 @@ Canvas::Plugin.register('google_docs', :collaborations, {
   :settings_partial => 'plugins/google_docs_settings',
   :validator => 'GoogleDocsValidator'
 })
+Canvas::Plugin.register('google_drive', nil, {
+  :name => lambda{ t :name, 'Google Drive' },
+  :description => lambda{ t :description, 'Google Drive file sharing' },
+  :website => 'http://drive.google.com',
+  :author => 'Instructure',
+  :author_website => 'http://www.instructure.com',
+  :version => '1.0.0',
+  :settings_partial => 'plugins/google_drive_settings',
+  :validator => 'GoogleDriveValidator'
+})
 Canvas::Plugin.register('kaltura', nil, {
   :name => lambda{ t :name, 'Kaltura' },
   :description => lambda{ t :description, 'Kaltura video/audio recording and playback'},
@@ -71,15 +91,6 @@ Canvas::Plugin.register('kaltura', nil, {
   :version => '1.0.0',
   :settings_partial => 'plugins/kaltura_settings',
   :validator => 'KalturaValidator'
-})
-Canvas::Plugin.register('dim_dim', :web_conferencing, {
-  :name => lambda{ t :name, "DimDim" },
-  :description => lambda{ t :description, "DimDim web conferencing support" },
-  :website => 'http://www.dimdim.com',
-  :author => 'Instructure',
-  :author_website => 'http://www.instructure.com',
-  :version => '1.0.0',
-  :settings_partial => 'plugins/dim_dim_settings'
 })
 Canvas::Plugin.register('wimba', :web_conferencing, {
   :name => lambda{ t :name, "Wimba" },
@@ -103,8 +114,8 @@ Canvas::Plugin.register('error_reporting', :error_reporting, {
   :settings_partial => 'plugins/error_reporting_settings'
 })
 Canvas::Plugin.register('big_blue_button', :web_conferencing, {
-  :name => lambda{ t :name, "Big Blue Button" },
-  :description => lambda{ t :description, "Big Blue Button web conferencing support" },
+  :name => lambda{ t :name, "BigBlueButton" },
+  :description => lambda{ t :description, "BigBlueButton web conferencing support" },
   :website => 'http://bigbluebutton.org',
   :author => 'Instructure',
   :author_website => 'http://www.instructure.com',
@@ -112,16 +123,6 @@ Canvas::Plugin.register('big_blue_button', :web_conferencing, {
   :settings_partial => 'plugins/big_blue_button_settings',
   :validator => 'BigBlueButtonValidator',
   :encrypted_settings => [:secret]
-})
-Canvas::Plugin.register('tinychat', nil, {
-  :name => lambda{ t :name, 'Tinychat' },
-  :description => lambda{ t :description, 'Tinychat chat room'},
-  :website => 'http://www.tinychat.com',
-  :author => 'Instructure',
-  :author_website => 'http://www.instructure.com',
-  :version => '1.0.0',
-  :settings_partial => 'plugins/tinychat_settings',
-  :validator => 'TinychatValidator'
 })
 require_dependency 'cc/importer/cc_worker'
 Canvas::Plugin.register 'canvas_cartridge_importer', :export_system, {
@@ -137,7 +138,8 @@ Canvas::Plugin.register 'canvas_cartridge_importer', :export_system, {
     :worker => 'CCWorker',
     :migration_partial => 'canvas_config',
     :requires_file_upload => true,
-    :provides =>{:canvas_cartridge => CC::Importer::Canvas::Converter}
+    :provides =>{:canvas_cartridge => CC::Importer::Canvas::Converter},
+    :valid_contexts => %w{Account Course}
   },
 }
 require_dependency 'canvas/migration/worker/course_copy_worker'
@@ -155,7 +157,8 @@ Canvas::Plugin.register 'course_copy_importer', :export_system, {
                 :requires_file_upload => false,
                 :skip_conversion_step => true,
                 :required_options_validator => Canvas::Migration::Validators::CourseCopyValidator,
-                :required_settings => [:source_course_id]
+                :required_settings => [:source_course_id],
+                :valid_contexts => %w{Course}
         },
 }
 require_dependency 'canvas/migration/worker/zip_file_worker'
@@ -164,7 +167,7 @@ Canvas::Plugin.register 'zip_file_importer', :export_system, {
         :display_name => lambda { I18n.t :zip_file_display, 'File Import' },
         :author => 'Instructure',
         :author_website => 'http://www.instructure.com',
-        :description => lambda { I18n.t :zip_file_description, 'Migration plugin for unpacking plain .zip files into a course' },
+        :description => lambda { I18n.t :zip_file_description, 'Migration plugin for unpacking .zip archives into course, group, or user files' },
         :version => '1.0.0',
         :select_text => lambda { I18n.t :zip_file_file_description, "Unzip .zip file into folder" },
         :sort_order => 2,
@@ -173,7 +176,8 @@ Canvas::Plugin.register 'zip_file_importer', :export_system, {
                 :requires_file_upload => true,
                 :no_selective_import => true,
                 :required_options_validator => Canvas::Migration::Validators::ZipImporterValidator,
-                :required_settings => [:source_folder_id]
+                :required_settings => [:source_folder_id],
+                :valid_contexts => %w(Course Group User)
         },
 }
 Canvas::Plugin.register 'common_cartridge_importer', :export_system, {
@@ -183,7 +187,7 @@ Canvas::Plugin.register 'common_cartridge_importer', :export_system, {
   :author_website => 'http://www.instructure.com',
   :description => lambda{ I18n.t :common_cartridge_description, 'This enables converting a Common Cartridge packages in the intermediary json format to be imported' },
   :version => '1.0.0',
-  :select_text => lambda{ I18n.t :common_cartridge_file_description, "Common Cartridge 1.0/1.1/1.2 Package" },
+  :select_text => lambda{ I18n.t :common_cartridge_file_description, "Common Cartridge 1.x Package" },
   :settings => {
     :worker => 'CCWorker',
     :migration_partial => 'cc_config',
@@ -191,7 +195,9 @@ Canvas::Plugin.register 'common_cartridge_importer', :export_system, {
     :provides =>{:common_cartridge=>CC::Importer::Standard::Converter, 
                  :common_cartridge_1_0=>CC::Importer::Standard::Converter, 
                  :common_cartridge_1_1=>CC::Importer::Standard::Converter, 
-                 :common_cartridge_1_2=>CC::Importer::Standard::Converter},
+                 :common_cartridge_1_2=>CC::Importer::Standard::Converter,
+                 :common_cartridge_1_3=>CC::Importer::Standard::Converter},
+    :valid_contexts => %w{Account Course}
   },
 }
 Canvas::Plugin.register('grade_export', :sis, {
@@ -243,19 +249,9 @@ Canvas::Plugin.register('assignment_freezer', nil, {
   :settings => nil
 })
 
-Canvas::Plugin.register('embedly', nil, {
-  :name => lambda{ t :name, 'Embedly Integration' },
-  :description => lambda{ t :description, 'Pull Embedly info for Collections' },
-  :website => 'http://embed.ly/',
-  :author => 'Instructure',
-  :author_website => 'http://www.instructure.com',
-  :version => '1.0.0',
-  :settings_partial => 'plugins/embedly_settings',
-  :settings => nil
-})
 Canvas::Plugin.register('crocodoc', :previews, {
   :name => lambda { t :name, 'Crocodoc' },
-  :description => lambda { t :description, 'Enabled Crocodoc as a document preview option' },
+  :description => lambda { t :description, 'Enable Crocodoc as a document preview option' },
   :website => 'https://crocodoc.com/',
   :author => 'Instructure',
   :author_website => 'http://www.instructure.com',
@@ -263,6 +259,17 @@ Canvas::Plugin.register('crocodoc', :previews, {
   :settings_partial => 'plugins/crocodoc_settings',
   :settings => nil
 })
+
+Canvas::Plugin.register('canvadocs', :previews, {
+  :name => lambda { t :name, 'Canvadocs' },
+  :description => lambda { t :description, 'Enable Canvadocs (compatible with Box View) as a document preview option' },
+  :author => 'Instructure',
+  :author_website => 'http://www.instructure.com',
+  :version => '1.0.0',
+  :settings_partial => 'plugins/canvadocs_settings',
+  :settings => nil
+})
+
 Canvas::Plugin.register('account_reports', nil, {
   :name => lambda{ t :name, 'Account Reports' },
   :description => lambda{ t :description, 'Select account reports' },
@@ -279,11 +286,43 @@ Canvas::Plugin.register('app_center', nil, {
     :description => lambda{ t :description, 'App Center for tracking/installing external tools in Canvas' },
     :settings_partial => 'plugins/app_center_settings',
     :settings => {
-        :base_url => 'https://www.edu-apps.org',
+        :base_url => 'https://www.eduappcenter.com',
         :token => nil,
-        :apps_index_endpoint => '/api/v1/apps',
-        :app_reviews_endpoint => '/api/v1/apps/:id/reviews'
+        :apps_index_endpoint => '/api/v1/lti_apps',
+        :app_reviews_endpoint => '/api/v1/lti_apps/:id/reviews'
     },
     :validator => 'AppCenterValidator'
 })
-
+Canvas::Plugin.register('pandapub', nil, {
+  :name => lambda{ t :name, 'PandaPub' },
+  :description => lambda{ t :description, 'Pub/Sub service' },
+  :author => 'Instructure',
+  :author_website => 'http://www.instructure.com',
+  :version => '1.0.0',
+  :settings => {
+    :base_url => nil,
+    :application_id => nil,
+    :key_id => nil,
+    :key_secret => nil
+  },
+  :settings_partial => 'plugins/panda_pub_settings',
+  :validator => 'PandaPubValidator'
+})
+Canvas::Plugins::TicketingSystem.register!
+Canvas::Plugin.register('live_events', nil, {
+  :name => lambda{ t :name, 'Live Events' },
+  :description => lambda{ t :description, 'Service for real-time events.' },
+  :author => 'Instructure',
+  :author_website => 'http://www.instructure.com',
+  :version => '1.0.0',
+  :settings => {
+    :kinesis_stream_name => nil,
+    :aws_access_key_id => nil,
+    :aws_secret_access_key => nil,
+    :aws_region => 'us-east-1',
+    :aws_endpoint => nil,
+  },
+  :encrypted_settings => [ :aws_secret_access_key ],
+  :settings_partial => 'plugins/live_events_settings',
+  :validator => 'LiveEventsValidator'
+})

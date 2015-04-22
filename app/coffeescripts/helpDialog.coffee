@@ -17,10 +17,10 @@ define [
   'jquery.disableWhileLoading'
 ], (I18n, helpDialogTemplate, $, _, INST, htmlEscape, preventDefault) ->
 
-  showEmail = not ENV.current_user_id
-
   helpDialog =
     defaultTitle: I18n.t 'Help', "Help"
+
+    showEmail: -> not ENV.current_user_id
 
     initDialog: ->
       @$dialog = $('<div style="padding:0; overflow: visible;" />').dialog
@@ -41,7 +41,7 @@ define [
             role is 'user' or
             (ENV.current_user_roles and role in ENV.current_user_roles)
         locals =
-          showEmail: showEmail
+          showEmail: @showEmail()
           helpLinks: links
           url: window.location
           contextAssetString: ENV.context_asset_string
@@ -57,9 +57,9 @@ define [
     initTicketForm: ->
       $form = @$dialog.find('#create_ticket').formSubmit
         disableWhileLoading: true
-        required: ->
+        required: =>
           requiredFields = ['error[subject]', 'error[comments]', 'error[user_perceived_severity]']
-          requiredFields.push 'error[email]' if showEmail
+          requiredFields.push 'error[email]' if @showEmail()
           requiredFields
         success: =>
           @$dialog.dialog('close')
@@ -68,31 +68,34 @@ define [
     switchTo: (panelId) ->
       toggleablePanels = "#teacher_feedback, #create_ticket"
       @$dialog.find(toggleablePanels).hide()
-
-      newHeight = @$dialog.find(panelId).show().outerHeight()
+      newPanel = @$dialog.find(panelId)
+      newHeight = newPanel.show().outerHeight()
       @$dialog.animate({
         left : if toggleablePanels.match(panelId) then -400 else 0
         height: newHeight
       }, {
         step: =>
           #reposition vertically to reflect current height
-          @$dialog.dialog('option', 'position', 'center')
+          @initDialog() unless @dialogInited and @$dialog?.hasClass("ui-dialog-content")
+          @$dialog?.dialog('option', 'position', 'center')
         duration: 100
+        complete: ->
+          newPanel.find(':input').not(':disabled').first().focus()
       })
 
       if newTitle = @$dialog.find("a[href='#{panelId}'] .text").text()
         newTitle = $("
           <a class='ui-dialog-header-backlink' href='#help-dialog-options'>
-            #{I18n.t('Back', 'Back')}
+            #{htmlEscape(I18n.t('Back', 'Back'))}
           </a>
-          <span>#{newTitle}</span>
+          <span>#{htmlEscape(newTitle)}</span>
         ")
       else
         newTitle = @defaultTitle
       @$dialog.dialog 'option', 'title', newTitle
 
     open: ->
-      helpDialog.initDialog() unless helpDialog.dialogInited
+      helpDialog.initDialog() unless helpDialog.dialogInited and helpDialog.$dialog?.hasClass("ui-dialog-content")
       helpDialog.$dialog.dialog('open')
       helpDialog.initTeacherFeedback()
 
@@ -112,11 +115,12 @@ define [
                 @$dialog.dialog('close')
 
         $.when(coursesDfd, @helpLinksDfd).done ([courses]) ->
-          options = $.map courses, (c) ->
-            "<option value='course_#{c.id}_admins' #{if ENV.context_id is c.id then 'selected' else ''}>
+          optionsHtml = $.map(courses, (c) ->
+            "<option value='course_#{c.id}_admins' #{$.raw if ENV.context_id is c.id then 'selected' else ''}>
               #{htmlEscape(c.name)}
             </option>"
-          $form.find('[name="recipients[]"]').html(options.join '')
+          ).join('')
+          $form.find('[name="recipients[]"]').html(optionsHtml)
 
     initTriggers: ->
       $('.help_dialog_trigger').click preventDefault @open

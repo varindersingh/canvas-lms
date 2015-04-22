@@ -1,10 +1,15 @@
 define [
+  'underscore'
   'Backbone'
   'compiled/backbone-ext/DefaultUrlMixin'
-], ({Model}, DefaultUrlMixin) ->
+], (_, {Model}, DefaultUrlMixin) ->
 
   class ExternalTool extends Model
     @mixin DefaultUrlMixin
+
+    initialize: ->
+      super
+      delete @url if _.has(@, 'url')
 
     resourceName: 'external_tools'
 
@@ -26,3 +31,6 @@ define [
       url = "/#{@_contextPath()}/external_tools/#{@id}/resource_selection?launch_type=#{launchType}"
       url = "#{url}&#{params.join('&')}" if params.length > 0
       url
+
+    assetString: () ->
+      "context_external_tool_#{@id}"

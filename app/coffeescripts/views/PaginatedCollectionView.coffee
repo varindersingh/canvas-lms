@@ -38,12 +38,18 @@ define [
       '.paginatedLoadingIndicator': '$loadingIndicator'
     )
 
+    @optionProperty 'scrollableElement'
     @optionProperty 'scrollContainer'
 
     ##
     # Whether the collection should keep fetching pages until below the
     # viewport. Defaults to false (i.e. just do one fetch per scroll)
     @optionProperty 'autoFetch'
+
+    ##
+    # Whether the collection should keep fetching pages until the last
+    # page is reached.  Defaults to false
+    @optionProperty 'fetchItAll'
 
     template: template
 
@@ -55,19 +61,29 @@ define [
       @initScrollContainer()
 
     ##
+    # Set the scroll container after the view has been created.
+    # Useful if the view is created before the container is rendered.
+
+    resetScrollContainer: (container) =>
+      @detachScroll()
+      @scrollContainer = container
+      @initScrollContainer()
+      @attachScroll()
+
+    ##
     # Extends parent to detach scroll container event
     #
     # @api private
 
     attachCollection: ->
       super
-      @collection.on 'reset', @attachScroll
-      @collection.on 'fetched:last', @detachScroll
-      @collection.on 'beforeFetch', @showLoadingIndicator
-      if @autoFetch
-        @collection.on 'fetch', => setTimeout @checkScroll # next tick so events don't stomp on each other
+      @listenTo @collection, 'reset', @attachScroll
+      @listenTo @collection, 'fetched:last', @detachScroll
+      @listenTo @collection, 'beforeFetch', @showLoadingIndicator
+      if @autoFetch or @fetchItAll
+        @listenTo @collection, 'fetch', => setTimeout @checkScroll # next tick so events don't stomp on each other
       else
-        @collection.on 'fetch', @hideLoadingIndicator
+        @listenTo @collection, 'fetch', @hideLoadingIndicator
 
     ##
     # Sets instance properties regarding the scrollContainer
@@ -75,6 +91,10 @@ define [
     # @api private
 
     initScrollContainer: ->
+      @$scrollableElement = if @scrollableElement
+        $ @scrollableElement
+      else
+        @$el
       @scrollContainer = $ @scrollContainer
       @heightContainer = if @scrollContainer[0] is window
         # window has no position
@@ -108,13 +128,13 @@ define [
 
     checkScroll: =>
       return if @collection.fetchingPage or @collection.fetchingNextPage or not @$el.length
-      elementBottom = @$el.position().top +
-        @$el.height() -
-        @heightContainer.position().top
+      elementBottom = (@$scrollableElement.position()?.top || 0) +
+        @$scrollableElement.height() -
+        @heightContainer.position()?.top
       distanceToBottom = elementBottom -
         @scrollContainer.scrollTop() -
         @scrollContainer.height()
-      if distanceToBottom < @options.buffer and @collection.canFetch('next')
+      if (@fetchItAll || distanceToBottom < @options.buffer) and @collection.canFetch('next')
         @collection.fetch page: 'next'
       else
         @hideLoadingIndicator()
@@ -135,7 +155,7 @@ define [
 
     afterRender: ->
       super
-      @hideLoadingIndicator()
+      @hideLoadingIndicator() unless @collection.fetchingPage
 
     ##
     # Hides the loading indicator
@@ -152,4 +172,3 @@ define [
 
     showLoadingIndicator: =>
       @$loadingIndicator?.show()
-

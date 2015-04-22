@@ -21,8 +21,8 @@ module SIS
 
     def process
       start = Time.now
-      importer = Work.new(@batch_id, @root_account, @logger)
-      Course.skip_callback(:update_enrollments_later) do
+      importer = Work.new(@batch, @root_account, @logger)
+      Course.suspend_callbacks(:update_enrollments_later) do
         Course.process_as_sis(@sis_options) do
           CourseSection.process_as_sis(@sis_options) do
             Course.skip_updating_account_associations do
@@ -40,8 +40,8 @@ module SIS
     class Work
       attr_accessor :success_count, :course_ids_to_update_associations
 
-      def initialize(batch_id, root_account, logger)
-        @batch_id = batch_id
+      def initialize(batch, root_account, logger)
+        @batch = batch
         @root_account = root_account
         @logger = logger
         @success_count = 0
@@ -57,11 +57,11 @@ module SIS
         raise ImportError, "No section_id given for a cross-listing" if section_id.blank?
         raise ImportError, "Improper status \"#{status}\" for a cross-listing" unless status =~ /\A(active|deleted)\z/i
 
-        section = CourseSection.find_by_root_account_id_and_sis_source_id(@root_account.id, section_id)
+        section = @root_account.course_sections.where(sis_source_id: section_id).first
         raise ImportError, "A cross-listing referenced a non-existent section #{section_id}" unless section
 
         unless @course && @course.sis_source_id == xlist_course_id
-          @course = Course.find_by_root_account_id_and_sis_source_id(@root_account.id, xlist_course_id)
+          @course = @root_account.all_courses.where(sis_source_id: xlist_course_id).first
           if !@course && status =~ /\Aactive\z/i
             # no course with this crosslist id found, make a new course,
             # using the section's current course as a template
@@ -75,7 +75,7 @@ module SIS
             @course.conclude_at = section.course.conclude_at
             @course.restrict_enrollments_to_course_dates = section.course.restrict_enrollments_to_course_dates
             @course.sis_source_id = xlist_course_id
-            @course.sis_batch_id = @batch_id if @batch_id
+            @course.sis_batch_id = @batch.id if @batch
             @course.workflow_state = 'claimed'
             @course.template_course = section.course
             @course.save_without_broadcasting!

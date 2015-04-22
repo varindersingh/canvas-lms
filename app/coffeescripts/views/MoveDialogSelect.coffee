@@ -1,8 +1,9 @@
 define [
   'i18n!assignments'
+  'jquery'
   'Backbone'
   'jst/MoveDialogSelect'
-], (I18n, Backbone, template) ->
+], (I18n, $, Backbone, template) ->
 
   class MoveDialogSelect extends Backbone.View
     setViewProperties: false
@@ -15,7 +16,7 @@ define [
 
     getLabelText: ->
       @labelText or
-      I18n.beforeLabel 'label_place_before', "Place before"
+      I18n.beforeLabel I18n.t('labels.label_place_before', "Place before")
 
     initialize: (options) ->
       super
@@ -31,9 +32,9 @@ define [
       # I'm sorry, Voiceover + jQueryUI made me do it
       # VO won't acknowledge the existance of the re-rendered view
       # but if we render just the options, it's OK
-      fragment = $(@template @toJSON())
-      opts = fragment.filter('select').find('option')
-      @$('select').empty().append(opts)
+      $fragment = $(@template @toJSON())
+      $opts = $fragment.filter('select').find('option')
+      @$('select').empty().append($opts)
 
     value: ->
       @$('select').val()

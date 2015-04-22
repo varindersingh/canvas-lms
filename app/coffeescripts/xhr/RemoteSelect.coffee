@@ -20,13 +20,18 @@
 # Populates a <select> element with data from an ajax call. Takes two arguments.
 # The first is a <select> element, the second is an options hash 
 
+###
+xsslint jqueryObject.property placeholder spinner
+###
+
 define [
+  'jquery'
   'underscore'
   'compiled/class/cache'
   'vendor/spin'
   'jst/util/select/optgroups'
   'jst/util/select/options'
-], (_, cache, Spinner, optGroupTpl, optsTpl) ->
+], ($, _, cache, Spinner, optGroupTpl, optsTpl) ->
 
   class RemoteSelect
     ##

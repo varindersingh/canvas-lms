@@ -21,15 +21,23 @@ class AssignmentGroup < ActiveRecord::Base
   include Workflow
 
   attr_accessible :name, :rules, :assignment_weighting_scheme, :group_weight, :position, :default_assignment_name
+  EXPORTABLE_ATTRIBUTES = [
+    :id, :name, :rules, :default_assignment_name, :assignment_weighting_scheme, :group_weight, :context_id,
+    :context_type, :workflow_state, :created_at, :updated_at, :cloned_item_id, :context_code
+  ]
+
+  EXPORTABLE_ASSOCIATIONS = [:context, :assignments]
+
   attr_readonly :context_id, :context_type
-  acts_as_list :scope => 'assignment_groups.context_type = #{connection.quote(context_type)} AND assignment_groups.context_id = #{context_id} AND assignment_groups.workflow_state <> \'deleted\''
+  belongs_to :context, :polymorphic => true
+  validates_inclusion_of :context_type, :allow_nil => true, :in => ['Course']
+  acts_as_list scope: { context: self, workflow_state: 'available' }
   has_a_broadcast_policy
 
   has_many :assignments, :order => 'position, due_at, title', :dependent => :destroy
   has_many :active_assignments, :class_name => 'Assignment', :conditions => ['assignments.workflow_state != ?', 'deleted'], :order => 'assignments.position, assignments.due_at, assignments.title'
+  has_many :published_assignments, :class_name => 'Assignment', :conditions => "assignments.workflow_state = 'published'", :order => 'assignments.position, assignments.due_at, assignments.title'
 
-  belongs_to :context, :polymorphic => true
-  belongs_to :cloned_item
   validates_presence_of :context_id, :context_type, :workflow_state
   validates_length_of :rules, :maximum => maximum_text_length, :allow_nil => true, :allow_blank => true
   validates_length_of :default_assignment_name, :maximum => maximum_string_length, :allow_nil => true
@@ -37,24 +45,24 @@ class AssignmentGroup < ActiveRecord::Base
 
   before_save :set_context_code
   before_save :generate_default_values
-  before_save :group_weight_changed
   after_save :course_grading_change
   after_save :touch_context
   after_save :update_student_grades
 
   def generate_default_values
-    self.name ||= t 'default_title', "Assignments"
+    if self.name.blank?
+      self.name = t 'default_title', "Assignments"
+    end
     if !self.group_weight
       self.group_weight = 0
     end
-    @grades_changed = self.rules_changed? || self.group_weight_changed?
     self.default_assignment_name = self.name
     self.default_assignment_name = self.default_assignment_name.singularize if I18n.locale == :en
   end
   protected :generate_default_values
 
   def update_student_grades
-    if @grades_changed
+    if self.rules_changed? || self.group_weight_changed?
       connection.after_transaction_commit { self.context.recompute_student_scores }
     end
   end
@@ -64,10 +72,10 @@ class AssignmentGroup < ActiveRecord::Base
   end
 
   set_policy do
-    given { |user, session| self.context.grants_rights?(user, session, :read, :view_all_grades).any?(&:last) }
+    given { |user, session| self.context.grants_any_right?(user, session, :read, :view_all_grades, :manage_grades) }
     can :read
 
-    given { |user, session| self.context.grants_rights?(user, session, :manage_assignments, :manage_grades).any?(&:last) }
+    given { |user, session| self.context.grants_right?(user, session, :manage_assignments) }
     can :read and can :create and can :update and can :delete
   end
 
@@ -97,7 +105,7 @@ class AssignmentGroup < ActiveRecord::Base
     to_restore.each { |assignment| assignment.restore(:assignment_group) }
   end
 
-  def rules_hash
+  def rules_hash (options={})
     return @rules_hash if @rules_hash
     @rules_hash = {}.with_indifferent_access
     (rules || "").split("\n").each do |rule|
@@ -105,7 +113,7 @@ class AssignmentGroup < ActiveRecord::Base
       if split.length > 1
         if split[0] == 'never_drop'
           @rules_hash[split[0]] ||= []
-          @rules_hash[split[0]] << split[1].to_i
+          @rules_hash[split[0]] << (options[:stringify_json_ids] ? split[1].to_s : split[1].to_i)
         else
           @rules_hash[split[0]] = split[1].to_i
         end
@@ -138,19 +146,14 @@ class AssignmentGroup < ActiveRecord::Base
     self.assignments.map{|a| a.points_possible || 0}.sum
   end
 
-  scope :include_active_assignments, includes(:active_assignments)
-  scope :active, where("assignment_groups.workflow_state<>'deleted'")
+  scope :include_active_assignments, -> { includes(:active_assignments) }
+  scope :active, -> { where("assignment_groups.workflow_state<>'deleted'") }
   scope :before, lambda { |date| where("assignment_groups.created_at<?", date) }
   scope :for_context_codes, lambda { |codes| active.where(:context_code => codes).order(:position) }
   scope :for_course, lambda { |course| where(:context_id => course, :context_type => 'Course') }
 
-  def group_weight_changed
-    @group_weight_changed = self.group_weight_changed?
-    true
-  end
-
   def course_grading_change
-    self.context.grade_weight_changed! if @group_weight_changed && self.context && self.context.group_weighting_scheme == 'percent'
+    self.context.grade_weight_changed! if group_weight_changed? && self.context && self.context.group_weighting_scheme == 'percent'
     true
   end
 
@@ -163,90 +166,8 @@ class AssignmentGroup < ActiveRecord::Base
     }
   end
 
-  attr_accessor :clone_updated
-  def clone_for(context, dup=nil, options={})
-    if !self.cloned_item && !self.new_record?
-      self.cloned_item ||= ClonedItem.create(:original_item => self)
-      self.save
-    end
-    existing = context.assignment_groups.active.find_by_id(self.id)
-    existing ||= context.assignment_groups.active.find_by_cloned_item_id(self.cloned_item_id || 0)
-    return existing if existing && !options[:overwrite]
-    dup ||= AssignmentGroup.new
-    dup = existing if existing && options[:overwrite]
-    self.attributes.delete_if{|k,v| [:id, :position].include?(k.to_sym) }.each do |key, val|
-      dup.send("#{key}=", val)
-    end
-    dup.context = context
-    context.log_merge_result("Assignment Group \"#{self.name}\" created")
-    dup.updated_at = Time.now
-    dup.clone_updated = true
-    dup
-  end
-
   def students
     assignments.map(&:students).flatten
-  end
-
-  def self.process_migration(data, migration)
-    add_groups_for_imported_assignments(data, migration)
-    groups = data['assignment_groups'] ? data['assignment_groups']: []
-    groups.each do |group|
-      if migration.import_object?("assignment_groups", group['migration_id'])
-        begin
-          import_from_migration(group, migration.context)
-        rescue
-          migration.add_import_warning(t('#migration.assignment_group_type', "Assignment Group"), group[:title], $!)
-        end
-      end
-    end
-    migration.context.assignment_groups.first.try(:fix_position_conflicts)
-  end
-
-  def self.add_groups_for_imported_assignments(data, migration)
-    return unless data['assignments'] && migration.migration_settings[:migration_ids_to_import] &&
-      migration.migration_settings[:migration_ids_to_import][:copy] &&
-      migration.migration_settings[:migration_ids_to_import][:copy].length > 0
-
-    migration.migration_settings[:migration_ids_to_import][:copy]['assignment_groups'] ||= {}
-    data['assignments'].each do |assignment_hash|
-      a_hash = assignment_hash.with_indifferent_access
-      if migration.import_object?("assignments", a_hash['migration_id']) &&
-          group_mig_id = a_hash['assignment_group_migration_id']
-        migration.migration_settings[:migration_ids_to_import][:copy]['assignment_groups'][group_mig_id] = true
-      end
-    end
-  end
-
-  def self.import_from_migration(hash, context, item=nil)
-    hash = hash.with_indifferent_access
-    return nil if hash[:migration_id] && hash[:assignment_groups_to_import] && !hash[:assignment_groups_to_import][hash[:migration_id]]
-    item ||= find_by_context_id_and_context_type_and_id(context.id, context.class.to_s, hash[:id])
-    item ||= find_by_context_id_and_context_type_and_migration_id(context.id, context.class.to_s, hash[:migration_id]) if hash[:migration_id]
-    item ||= context.assignment_groups.new
-    context.imported_migration_items << item if context.imported_migration_items && item.new_record?
-    item.migration_id = hash[:migration_id]
-    item.workflow_state = 'available' if item.deleted?
-    item.name = hash[:title]
-    item.position = hash[:position].to_i if hash[:position] && hash[:position].to_i > 0
-    item.group_weight = hash[:group_weight] if hash[:group_weight]
-
-    if hash[:rules] && hash[:rules].length > 0
-      rules = ""
-      hash[:rules].each do |rule|
-        if rule[:drop_type] == "drop_lowest" || rule[:drop_type] == "drop_highest"
-          rules += "#{rule[:drop_type]}:#{rule[:drop_count]}\n"
-        elsif rule[:drop_type] == "never_drop"
-          if context.respond_to?(:assignment_group_no_drop_assignments)
-            context.assignment_group_no_drop_assignments[rule[:assignment_migration_id]] = item
-          end
-        end
-      end
-      item.rules = rules unless rules == ''
-    end
-
-    item.save!
-    item
   end
 
   def self.add_never_drop_assignment(group, assignment)
@@ -280,15 +201,30 @@ class AssignmentGroup < ActiveRecord::Base
     false
   end
 
+  def visible_assignments(user, includes=[])
+    AssignmentGroup.visible_assignments(user, self.context, [self], includes)
+  end
+
+  def self.visible_assignments(user, context, assignment_groups, includes = [])
+    if context.grants_any_right?(user, :manage_grades, :read_as_admin, :manage_assignments)
+      scope = context.active_assignments.where(:assignment_group_id => assignment_groups)
+    elsif user.nil?
+      scope = context.active_assignments.published.where(:assignment_group_id => assignment_groups)
+    else
+      scope = user.assignments_visibile_in_course(context).
+              where(:assignment_group_id => assignment_groups).published
+    end
+    includes.any? ? scope.preload(includes) : scope
+  end
+
   def move_assignments_to(move_to_id)
     new_group = context.assignment_groups.active.find(move_to_id)
     order = new_group.assignments.active.pluck(:id)
     ids_to_change = self.assignments.active.pluck(:id)
     order += ids_to_change
     Assignment.where(:id => ids_to_change).update_all(:assignment_group_id => new_group, :updated_at => Time.now.utc) unless ids_to_change.empty?
-    Assignment.find_by_id(order).update_order(order) unless order.empty?
+    Assignment.where(id: order).first.update_order(order) unless order.empty?
     new_group.touch
     self.reload
   end
-
 end

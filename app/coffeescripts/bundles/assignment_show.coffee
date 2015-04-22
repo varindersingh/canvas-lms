@@ -4,17 +4,18 @@ require [
   'jquery'
   'compiled/models/Assignment',
   'compiled/views/PublishButtonView',
-  'compiled/views/assignments/SpeedgraderLinkView'
+  'compiled/views/assignments/SpeedgraderLinkView',
+  'compiled/util/vddTooltip',
   'compiled/jquery/ModuleSequenceFooter'
   'jquery.instructure_forms'
-], (INST, I18n, $, Assignment, PublishButtonView, SpeedgraderLinkView) ->
+], (INST, I18n, $, Assignment, PublishButtonView, SpeedgraderLinkView, vddTooltip) ->
 
   $ ->
     $el = $('#assignment_publish_button')
     if $el.length > 0
       model = new Assignment
         id: $el.attr('data-id')
-        publishable: true
+        unpublishable: !$el.hasClass('disabled')
         published: $el.hasClass('published')
       model.doNotParse()
 
@@ -22,14 +23,15 @@ require [
         .render()
       new PublishButtonView(model: model, el: $el).render()
 
-    if ENV.DRAFT_STATE
-      # Add module sequence footer
-      $('#sequence_footer').moduleSequenceFooter(
-        courseID: ENV.COURSE_ID
-        assetType: 'Assignment'
-        assetID: ENV.ASSIGNMENT_ID
-        location: location
-      )
+    # Add module sequence footer
+    $('#sequence_footer').moduleSequenceFooter(
+      courseID: ENV.COURSE_ID
+      assetType: 'Assignment'
+      assetID: ENV.ASSIGNMENT_ID
+      location: location
+    )
+
+    vddTooltip()
 
   # -- This is all for the _grade_assignment sidebar partial
   $ ->

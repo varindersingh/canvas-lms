@@ -1,7 +1,7 @@
 require File.expand_path(File.dirname(__FILE__) + '/common')
 
 describe "section tabs on the left side" do
-  it_should_behave_like "in-process server selenium tests"
+  include_examples "in-process server selenium tests"
 
   context "as a teacher" do
 
@@ -13,7 +13,7 @@ describe "section tabs on the left side" do
         element_that_is_not_left_side = f('#content')
         # make sure to mouse off the link so the :hover and :focus styles do not apply
         driver.action.move_to(element_that_is_not_left_side).perform
-        driver.execute_script(js).should ==('rgb(214, 236, 252)')
+        expect(driver.execute_script(js)).to eq('rgb(255, 255, 255)')
       end
     end
   end

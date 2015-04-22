@@ -24,8 +24,10 @@ module CC::Importer::Standard
         main_file = {}
         main_file[:migration_id] = res[:migration_id]
         main_file[:path_name] = res[:href]
-        # todo check for CC permissions on the file
-        
+        if res[:intended_user_role] == 'Instructor'
+          main_file[:locked] = true
+        end
+
         # add any extra files in this resource
         res[:files].each do |file_ref|
           next unless file_ref[:href]
@@ -56,13 +58,20 @@ module CC::Importer::Standard
       zip_file = File.join(@base_export_dir, 'all_files.zip')
       make_export_dir
 
-      Zip::ZipFile.open(zip_file, 'w') do |zipfile|
+      Zip::File.open(zip_file, 'w') do |zipfile|
         file_map.each_value do |val|
+          next if zipfile.entries.include?(val[:path_name])
+
           file_path = File.join(@unzipped_file_path, val[:path_name])
           if File.exists?(file_path)
-            zipfile.add(val[:path_name], file_path)
+            zipfile.add(val[:path_name], file_path) if !File.directory?(file_path)
           else
-            # todo add warning
+            web_file_path = File.join(@unzipped_file_path, WEB_RESOURCES_FOLDER, val[:path_name])
+            if File.exists?(web_file_path)
+              zipfile.add(val[:path_name], web_file_path) if !File.directory?(web_file_path)
+            else
+              val[:errored] = true
+            end
           end
         end
       end

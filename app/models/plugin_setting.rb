@@ -37,6 +37,7 @@ class PluginSetting < ActiveRecord::Base
   before_save :encrypt_settings
   after_save :clear_cache
   after_destroy :clear_cache
+  after_initialize :initialize_plugin_setting
   
   def validate_uniqueness_of_name?
     true
@@ -56,7 +57,7 @@ class PluginSetting < ActiveRecord::Base
   # dummy value for encrypted fields so that you can still have something in the form (to indicate
   # it's set) and be able to tell when it gets blanked out.
   DUMMY_STRING = "~!?3NCRYPT3D?!~"
-  def after_initialize
+  def initialize_plugin_setting
     return unless settings && self.plugin
     @valid_settings = true
     if self.plugin.encrypted_settings
@@ -98,30 +99,34 @@ class PluginSetting < ActiveRecord::Base
     read_attribute(:disabled) != true
   end
 
-  def self.settings_for_plugin(name, plugin=nil)
-    res = Rails.cache.fetch(settings_cache_key(name)) do
-      if (plugin_setting = PluginSetting.find_by_name(name.to_s)) && plugin_setting.valid_settings? && plugin_setting.enabled?
-        plugin_setting.plugin = plugin
-        settings = plugin_setting.settings
-      else
-        plugin ||= Canvas::Plugin.find(name.to_s)
-        raise Canvas::NoPluginError unless plugin
-        settings = plugin.default_settings
-      end
-
-      settings || :nil
+  def self.cached_plugin_setting(name)
+    plugin_setting = MultiCache.fetch(settings_cache_key(name), copies: MultiCache.copies("plugin_settings")) do
+      PluginSetting.find_by_name(name.to_s) || :nil
     end
-    res = nil if res == :nil
-    res
+    plugin_setting = nil if plugin_setting == :nil
+    plugin_setting
+  end
+
+  def self.settings_for_plugin(name, plugin=nil)
+    if (plugin_setting = cached_plugin_setting(name)) && plugin_setting.valid_settings? && plugin_setting.enabled?
+      plugin_setting.plugin = plugin
+      settings = plugin_setting.settings
+    else
+      plugin ||= Canvas::Plugin.find(name.to_s)
+      raise Canvas::NoPluginError unless plugin
+      settings = plugin.default_settings
+    end
+
+    settings
   end
 
   def self.settings_cache_key(name)
-    ["settings_for_plugin", name].cache_key
+    ["settings_for_plugin2", name].cache_key
   end
 
   def clear_cache
     connection.after_transaction_commit do
-      Rails.cache.delete(PluginSetting.settings_cache_key(self.name))
+      MultiCache.delete(PluginSetting.settings_cache_key(self.name), copies: MultiCache.copies("plugin_settings"))
     end
   end
 
@@ -131,5 +136,9 @@ class PluginSetting < ActiveRecord::Base
 
   def self.decrypt(text, salt)
     Canvas::Security.decrypt_password(text, salt, 'instructure_plugin_setting')
+  end
+
+  def self.find_by_name(name)
+    where(name: name).first
   end
 end

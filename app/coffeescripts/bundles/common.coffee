@@ -1,7 +1,8 @@
 require [
+  'jquery'
+
   # true modules that we manage in this file
   'Backbone'
-  'compiled/widget/courseList'
   'compiled/helpDialog'
   'compiled/tours'
 
@@ -18,19 +19,17 @@ require [
   'ajax_errors'
   'page_views'
   'compiled/license_help'
+  'compiled/behaviors/authenticity_token'
   'compiled/behaviors/ujsLinks'
   'compiled/behaviors/admin-links'
+  'compiled/behaviors/activate'
   'compiled/behaviors/elementToggler'
-  # uncomment these to turn on collection pinning and voting
-  # 'compiled/behaviors/upvote-item'
-  # 'compiled/behaviors/repin-item'
-  # 'compiled/behaviors/follow'
   'compiled/behaviors/tooltip'
   'compiled/behaviors/instructure_inline_media_comment'
+  'compiled/behaviors/ping'
 
   # other stuff several bundles use
   'media_comments'
-  'order'
   'jqueryui/effects/drop'
   'jqueryui/progressbar'
   'jqueryui/tabs'
@@ -46,15 +45,9 @@ require [
   'vendor/jquery.pageless'
   'vendor/jquery.scrollTo'
   'compiled/badge_counts'
-], (Backbone, courseList, helpDialog, tours) ->
-  courseList.init()
+], ($, Backbone, helpDialog, tours) ->
   helpDialog.initTriggers()
   tours.init()
-
-  # Make the font-based icons work in IE8,
-  # it needs to be told to redraw pseudo elements on page load
-  if INST.browser.ie8
-    $('<style>:before,:after{content:"" !important}</style>').appendTo('head').delay(1).remove()
 
   $('#skip_navigation_link').on 'click', ->
     $($(this).attr('href')).attr('tabindex', -1).focus()
@@ -70,4 +63,3 @@ require [
   $('body').on 'click', '[data-pushstate]', (event) ->
     event.preventDefault()
     Backbone.history.navigate $(this).attr('href'), yes
-

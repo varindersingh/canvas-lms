@@ -3,31 +3,36 @@ define [
   'compiled/views/groups/manage/GroupCategoriesView'
   'compiled/collections/GroupCategoryCollection'
   'compiled/models/GroupCategory'
-  'compiled/views/groups/manage/GroupCategoryView'
   'helpers/fakeENV'
-], ($, GroupCategoriesView, GroupCategoryCollection, GroupCategory) ->
-
+], ($, GroupCategoriesView, GroupCategoryCollection, GroupCategory, fakeENV) ->
   clock = null
   view = null
   categories = null
+  wrapper = null
+  sanbox = null
 
   module 'GroupCategoriesView',
     setup: ->
+      fakeENV.setup()
       ENV.group_categories_url = '/api/v1/courses/1/group_categories'
       clock = sinon.useFakeTimers()
       categories = new GroupCategoryCollection [
         {id: 1, name: "group set 1"}
         {id: 2, name: "group set 2"}
       ]
+      sinon.stub(categories, "fetch").returns([])
       view = new GroupCategoriesView
         collection: categories
       view.render()
-      view.$el.appendTo($(document.body))
+      wrapper = document.getElementById("fixtures")
+      wrapper.innerHTML = ""
+      view.$el.appendTo($("#fixtures"))
 
     teardown: ->
+      fakeENV.teardown()
       clock.restore()
       view.remove()
-      $('.group_categories_area').remove()
+      wrapper.innerHTML = ""
 
   test 'render tab and panel elements', ->
     # find the tabs

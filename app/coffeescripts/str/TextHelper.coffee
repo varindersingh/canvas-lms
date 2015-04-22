@@ -33,9 +33,17 @@ define [
         [a-z0-9.\-]+[.][a-z]{2,4}/               # looks like domain name followed by a slash
       )
 
-      [^\s()<>]+                                 # Run of non-space, non-()<>
+      (?:
+        [^\s()<>]+                               # Run of non-space, non-()<>
+        |                                        # or
+        \([^\s()<>]*\)                           # balanced parens, single level
+      )+
 
-      [^\s`!()\[\]{};:'".,<>?«»“”‘’]             # End with: not a space or one of these punct chars
+      (?:
+        \([^\s()<>]*\)                           # balanced parens, single level
+        |                                        # or
+        [^\s`!()\[\]{};:'".,<>?«»“”‘’]           # End with: not a space or one of these punct chars
+      )
     ) | (
       LINK-PLACEHOLDER
     )
@@ -44,9 +52,9 @@ define [
   th = 
     quoteClump: (lines) ->
       "<div class='quoted_text_holder'>
-        <a href='#' class='show_quoted_text_link'>#{I18n.t("quoted_text_toggle", "show quoted text")}</a>
+        <a href='#' class='show_quoted_text_link'>#{htmlEscape I18n.t("quoted_text_toggle", "show quoted text")}</a>
         <div class='quoted_text' style='display: none;'>
-          #{lines.join "\n"}
+          #{$.raw lines.join "\n"}
         </div>
       </div>"
   
@@ -59,7 +67,7 @@ define [
             AUTO_LINKIFY_PLACEHOLDER
           else
             link = match
-            link = "http://" + link if link[0..3] == 'www'
+            link = "http://" + link if link[0..3] == 'www.'
             link = encodeURI(link).replace(/'/g, '%27')
             links.push link
             "<a href='#{htmlEscape(link)}'>#{htmlEscape(match)}</a>"

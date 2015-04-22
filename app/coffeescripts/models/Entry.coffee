@@ -7,15 +7,15 @@ define [
   'jquery'
   'underscore'
   'Backbone'
+  'str/stripTags'
   'jquery.ajaxJSON'
-], (I18n, $, _, Backbone) ->
+], (I18n, $, _, Backbone, stripTags) ->
 
   ##
   # Model representing an entry in discussion topic
   class Entry extends Backbone.Model
 
-    defaults:
-
+    defaults: ->
       ##
       # Attributes persisted with the server
       id: null
@@ -45,6 +45,7 @@ define [
     computedAttributes: [
       'canModerate'
       'canReply'
+      'hiddenName'
       'speedgraderUrl'
       'inlineReplyLink'
       { name: 'allowsSideComments', deps: ['parent_id', 'deleted'] }
@@ -75,7 +76,13 @@ define [
       ENV.DISCUSSION.DELETE_URL.replace /:id/, @get 'id'
 
     sync: (method, model, options = {}) ->
+      replies = @get('replies')
+      @set('replies', [])
       options.url = @[method]()
+      oldComplete = options.complete
+      options.complete = =>
+        @set('replies', replies)
+        oldComplete() if oldComplete?
       Backbone.sync method, this, options
 
     parse: (data) ->
@@ -102,11 +109,23 @@ define [
         'replies'
         'author'
 
+    hiddenName: ->
+      if ENV.DISCUSSION.HIDE_STUDENT_NAMES
+        isGradersEntry = @get('user_id')+'' is ENV.DISCUSSION.CURRENT_USER.id
+        isStudentsEntry = @get('user_id')+'' is ENV.DISCUSSION.STUDENT_ID
+
+        if isGradersEntry
+          @get('author').display_name
+        else if isStudentsEntry
+          I18n.t('this_student', "This Student")
+        else
+          I18n.t('discussion_participant', "Discussion Participant")
+
     ##
     # Computed attribute to determine if the entry can be moderated
     # by the current user
     canModerate: ->
-      isAuthorsEntry = @get('user_id') is ENV.DISCUSSION.CURRENT_USER.id
+      isAuthorsEntry = @get('user_id')+'' is ENV.DISCUSSION.CURRENT_USER.id
       isAuthorsEntry and ENV.DISCUSSION.PERMISSIONS.CAN_MANAGE_OWN or ENV.DISCUSSION.PERMISSIONS.MODERATE
 
     ##
@@ -154,13 +173,12 @@ define [
       # ENV.DISCUSSION.SPEEDGRADER_URL_TEMPLATE will only exist if I have permission to grade
       # and this thing is an assignment
       if ENV.DISCUSSION.SPEEDGRADER_URL_TEMPLATE
-        ENV.DISCUSSION.SPEEDGRADER_URL_TEMPLATE.replace /%22%3Astudent_id%22/, @get('user_id')
+        ENV.DISCUSSION.SPEEDGRADER_URL_TEMPLATE.replace /%22:student_id%22/, @get('user_id')
 
     ##
     # Computed attribute
     summary: ->
-      @escapeDiv ||= $('<div/>')
-      @escapeDiv.html(@get('message')).text()
+      stripTags @get('message')
 
     ##
     # Not familiar enough with Backbone.sync to do this, using ajaxJSON
